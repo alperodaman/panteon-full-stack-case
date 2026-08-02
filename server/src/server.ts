@@ -7,11 +7,13 @@ import { redis } from "./config/redis";
 import "./config/luaScripts";
 import { connectMongo, mongoose } from "./config/mongo";
 import { leaderboardRouter } from "./modules/leaderboard/leaderboard.routes";
+import { authRouter } from "./modules/auth/auth.routes";
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(authRouter);
 app.use(leaderboardRouter);
 
 app.get("/health", async (_req, res) => {
