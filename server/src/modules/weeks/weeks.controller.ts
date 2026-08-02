@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { resetWeek } from "../../jobs/weeklyReset.job";
 import { getNextWeekId } from "../leaderboard/week.util";
+import * as weeksService from "./weeks.service";
 
 const weekIdParamSchema = z.object({
   weekId: z.string().regex(/^\d{4}-W\d{2}$/, "weekId must look like YYYY-Www, e.g. 2026-W31"),
@@ -25,6 +26,45 @@ export async function postForceReset(req: Request, res: Response, next: NextFunc
     await resetWeek(weekId, nextWeekId);
 
     res.json({ weekId, nextWeekId, status: "COMPLETED" });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getCurrentWeek(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await weeksService.getCurrentWeek();
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getWeekResults(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const parsed = weekIdParamSchema.safeParse(req.params);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid weekId", details: parsed.error.flatten().fieldErrors });
+      return;
+    }
+
+    const result = await weeksService.getWeekResults(parsed.data.weekId);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getWeekPrizes(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const parsed = weekIdParamSchema.safeParse(req.params);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid weekId", details: parsed.error.flatten().fieldErrors });
+      return;
+    }
+
+    const result = await weeksService.getWeekPrizes(parsed.data.weekId);
+    res.json(result);
   } catch (err) {
     next(err);
   }

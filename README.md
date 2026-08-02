@@ -311,3 +311,54 @@ npm run worker
 # force a specific week's reset without waiting for Monday:
 curl -X POST localhost:3000/admin/weeks/2026-W31/force-reset -H "Authorization: Bearer <admin token>"
 ```
+
+## Weeks & history (`src/modules/weeks/`, `src/modules/history/`)
+
+- `weeks.service.ts` — `getCurrentWeek()`, `getWeekResults(weekId)`,
+  `getWeekPrizes(weekId)`.
+- `history.service.ts` — `getUserHistory(userId)`, combining Postgres
+  `WeeklyResult` (weeks the user made the top 100) with a MongoDB
+  `earning_events` aggregate (weeks they earned in but didn't rank).
+
+### `GET /weeks/:weekId/results` — active vs. finalized weeks
+
+Postgres's `WeeklyResult` table is only ever written by `resetWeek()` at
+cutover — the currently in-progress week has no row there yet. Rather than
+404ing or returning an empty payload for whichever week is still live, this
+endpoint (and `GET /weeks/:weekId/prizes`, the same way) branches on whether
+the requested `weekId` is the active one:
+
+- **active week** → reads the live top 100 straight from Redis (the same
+  `getTopLeaderboard()` used by `GET /leaderboard/top`), `"status":
+  "in_progress"`.
+- **past/finalized week** → reads Postgres `WeeklyResult` /
+  `PrizeDistribution`, `"status": "finalized"`.
+
+Both branches return the identical response shape, so a caller querying any
+`weekId` always gets "the best known result for that week" plus a flag for
+whether it's still moving, rather than having to special-case an
+empty/error response for a week that's mid-flight.
+
+### API endpoint reference
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| `POST` | `/auth/login` | — | `{ username }`, returns a JWT. 404 if the username doesn't exist. |
+| `GET` | `/leaderboard/top` | — | Top 100 for the active (or `?weekId=`) week. |
+| `GET` | `/leaderboard/me` | required | Caller's rank: full row, ±3/±2 window, or empty. |
+| `POST` | `/earnings/earn` | required | `{ amountInCents }`, rate-limited to 60/min/user. |
+| `GET` | `/weeks/current` | — | Active week id, start/end timestamps, estimated prize pool. |
+| `GET` | `/weeks/:weekId/results` | — | `status: "in_progress"` (Redis) or `"finalized"` (Postgres) — see above. |
+| `GET` | `/weeks/:weekId/prizes` | — | Same `in_progress`/`finalized` split; empty `prizes` for the active week. |
+| `POST` | `/admin/weeks/:weekId/force-reset` | admin | Demo shortcut — triggers `resetWeek()` on demand. |
+| `GET` | `/users/me/history` | required | Combined ranked (Postgres) + unranked (Mongo) weekly history. |
+| `GET` | `/health` | — | Postgres/Redis/Mongo connectivity check. |
+
+Run the full end-to-end integration suite (requires Postgres, Redis, and
+MongoDB from `docker compose up -d`; exercises every endpoint above except
+`/health`):
+
+```bash
+cd server
+npm run test tests/api.integration.test.ts
+```

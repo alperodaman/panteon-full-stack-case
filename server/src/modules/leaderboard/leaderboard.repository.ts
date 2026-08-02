@@ -65,6 +65,28 @@ export async function getUsersEarnings(
   return result;
 }
 
+// Cursor-batched HSCAN rather than HGETALL: at 2M active users this hash can
+// be large, and a single unbounded command shouldn't block Redis. Used by
+// weeks.service.ts to estimate the active week's prize pool (2% of total
+// earnings so far) -- unlike weeklyReset.job.ts's sumArchivedEarnings, this
+// reads the raw earnings hash directly (still populated pre-cutover) rather
+// than decoding the ZSET's compound score.
+export async function getTotalEarnings(weekId: string): Promise<number> {
+  const key = earningsKey(weekId);
+  let cursor = "0";
+  let total = 0;
+
+  do {
+    const [nextCursor, elements] = await redis.hscan(key, cursor, "COUNT", "1000");
+    cursor = nextCursor;
+    for (let i = 1; i < elements.length; i += 2) {
+      total += Number(elements[i]);
+    }
+  } while (cursor !== "0");
+
+  return total;
+}
+
 export async function recordEarning(
   userId: string,
   amountInCents: number,

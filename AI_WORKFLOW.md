@@ -325,6 +325,57 @@ It will be updated at every step.
   an admin token and showing the resulting Postgres rows match the
   normalized formula; confirming the BullMQ repeatable job is registered
   with the correct cron expression.
+- **Remaining API surface (weeks/history/error-handling):** Framed as
+  finishing the API surface after the reset job: remaining endpoints to add
+  are `GET /weeks/current`, `GET /weeks/:weekId/results`, `GET
+  /weeks/:weekId/prizes`, `GET /users/me/history`, plus centralized error
+  handling and a supertest integration suite.
+- **`GET /weeks/:weekId/results` — exact decision, stated as settled, not
+  open for redesign:** Postgres `WeeklyResult` is only populated by
+  `resetWeek()` at cutover, so the currently in-progress week has no row
+  there. Branch explicitly on whether the requested `weekId` equals the
+  active week (`config:currentWeekId`): if so, read the live top 100
+  straight from Redis via step 3's `getTopLeaderboard()` and mark
+  `"status": "in_progress"`; if it's a past/finalized week, read Postgres
+  `WeeklyResult` and mark `"status": "finalized"`. Both branches must
+  return the *same* response shape (the same `entries` object list as `GET
+  /leaderboard/top`) so a reviewer can query any `weekId` and always get
+  "the best known result for that week" instead of an empty/error
+  response, with `status` making explicit whether that result is still
+  moving. `GET /weeks/:weekId/prizes` was instructed to reuse the identical
+  `status` convention for consistency (empty `prizes` array + `"in_progress"`
+  for the active week, since `PrizeDistribution` is likewise only written at
+  cutover).
+- **`weeks.service.ts` scope specified exactly:** `getCurrentWeek()` (active
+  `weekId`, week start/end, an estimated prize pool from the active
+  leaderboard's total earnings × 2%), `getWeekResults(weekId)` (the decision
+  above, implemented verbatim), `getWeekPrizes(weekId)` (same
+  active/finalized split).
+- **`history.service.ts` scope specified exactly:** `getUserHistory(userId)`
+  combining Postgres `WeeklyResult` (weeks the user made the top 100) with a
+  MongoDB `earning_events` aggregate (weeks they earned in but didn't rank,
+  reporting total earnings with no rank) into one chronological list —
+  explicitly testable against the historical week data seeded in the
+  auth/seed step.
+- **Routes specified exactly:** `GET /weeks/current`, `GET
+  /weeks/:weekId/results`, `GET /weeks/:weekId/prizes`, `GET
+  /users/me/history` (behind `requireAuth`).
+- **`errorHandler.ts` specified exactly:** centralized Express error
+  handling middleware converting zod/Prisma/generic errors into a
+  consistent JSON shape, and not leaking stack traces in production.
+- **`server/tests/api.integration.test.ts` scenarios specified exactly (via
+  supertest):** login → earn → `/leaderboard/top` → `/leaderboard/me` →
+  force-reset → `/weeks/current` → `/weeks/:weekId/results` (checked for
+  *both* the just-finalized week right after force-reset *and* the newly
+  active week, explicitly verifying `status` comes back correct in each
+  case) → `/users/me/history`, end to end.
+- **Verification requirements specified exactly:** `npm run test
+  tests/api.integration.test.ts` green; all 8 endpoints manually called at
+  least once (history endpoint specifically exercised against the
+  historical week data seeded in the auth/seed step); `/weeks/:weekId/results`
+  called separately for the still-active week and for a just-force-reset
+  finalized week, showing `"in_progress"`/`"finalized"` come back correctly
+  in each case.
 
 
 ## Decisions made / boilerplate produced by the AI
@@ -590,6 +641,86 @@ It will be updated at every step.
   matching the existing validate-then-call pattern used by
   `auth.controller.ts`/`leaderboard.controller.ts`, rather than letting a
   malformed weekId fail deeper in the stack with a less clear error.
+- **`getCurrentWeek`'s "estimated" prize pool:** added
+  `leaderboardRepository.getTotalEarnings(weekId)` (cursor-batched `HSCAN`
+  over the `earnings:week:{weekId}` hash, mirroring
+  `weeklyReset.job.ts`'s existing `ZSCAN`-batching pattern for the same
+  reason — this hash can be large at scale and shouldn't be read with one
+  unbounded `HGETALL`) to sum the active week's earnings so far, then run
+  that through the *same* `calculatePrizePool()` used at real cutover — not
+  a separate estimate formula. Named `estimatedPrizePoolInCents` (not
+  `prizePoolInCents`) specifically because it changes until cutover, unlike
+  `PrizeDistribution.poolTotalInCents`, which is the real, final figure.
+- **`getWeekResults`/`getWeekPrizes` username enrichment:** each has its own
+  private `fetchUsernamesById` batched-`findMany` helper (identical in
+  shape to the one already duplicated between `leaderboard.service.ts` and
+  `weeklyReset.job.ts`), continuing that existing per-module pattern rather
+  than extracting a shared util now that it appears a third time.
+- **`history.service.ts` ordering:** weeks are sorted most-recent-first via
+  a plain `weekId.localeCompare()` — not explicitly specified either way —
+  since `weekId`'s `"YYYY-Www"` format already sorts lexicographically
+  identically to chronological order, so no date-parsing is needed.
+- **`history.controller.ts`/`history.routes.ts`:** added alongside the
+  explicitly-requested `history.service.ts`, matching the existing
+  service/controller/routes three-file layering used by every other module
+  (`leaderboard`, `weeks`, `auth`), for consistency rather than putting the
+  route directly on the service.
+- **`errorHandler.ts` scope:** implemented as a genuine last-resort handler
+  for whatever reaches `next(err)` unhandled — `ZodError` (400),
+  `Prisma.PrismaClientKnownRequestError` `P2002`/`P2025` (409/404), and a
+  generic 500 otherwise. Existing controllers' own inline error handling
+  (e.g. `auth.controller.ts`'s explicit 404 on `InvalidCredentialsError`,
+  every controller's `.safeParse()` 400s) was left as-is rather than
+  rerouted through this handler, since those are already correct,
+  request-specific responses — the central handler's job is only the
+  errors nothing upstream already turned into a client-safe response.
+- **`server.ts` needed to export `app` without also connecting to Mongo /
+  binding a port as a side effect,** since `tests/api.integration.test.ts`
+  drives it in-process via `supertest` rather than over a real socket.
+  Wrapped the existing `start()` call in `if (require.main === module)` so
+  only the process actually executed as the entry point (`node
+  dist/server.js` / `ts-node-dev src/server.ts`) triggers it; importing
+  `app` from a test is now side-effect-free.
+- **`tests/api.integration.test.ts` weekId choice:** used a fixed,
+  far-future, fictional weekId (`"2099-W01"`) rather than the real active
+  week, mirroring `tests/weeklyReset.test.ts`'s own use of fake weekIds —
+  this keeps the suite fully isolated from real `npm run seed` demo data
+  and, critically, means calling `POST /admin/weeks/:weekId/force-reset`
+  from the test never cuts over the actual live demo week (which would
+  prematurely end the reviewer's in-progress demo state and require a
+  reseed, exactly the manual-cleanup pattern already documented for the
+  weekly-reset-job step's own verification below). `config:currentWeekId`
+  is pointed at the fictional week in `beforeAll` and the key is fully
+  deleted (not reset to some other value) in `afterAll`, so a real request
+  made afterward falls back to computing the genuine current ISO week, same
+  as `tests/weeklyReset.test.ts`'s existing cleanup convention.
+- **Discovered and fixed a genuine bug this surfaced, not a test-only
+  workaround:** the first version of this test called `POST
+  /earnings/earn` for the fictional week using the already-issued,
+  real-clock-minted JWT, and got back corrupted earnings after archiving
+  (`6905` instead of `5000`) instead of a clean round-trip. Root cause:
+  `leaderboardService.earn()` computes `earnScore.lua`'s
+  `minutesSinceWeekStart` from the *real* wall clock relative to the
+  requested weekId's actual ISO week start; for a genuinely fictional
+  future weekId, that's a deeply out-of-range (huge) value, which overflows
+  the compound score's tiebreak term (designed to stay in `(0, 20000]`) and
+  corrupts the earnings decoded back out of the archived ZSET score after
+  cutover. This is real, load-bearing behavior of `earnScore.lua`/
+  `weeklyReset.job.ts`'s `decodeEarningsFromScore`, not a test bug — it
+  would reproduce identically if `config:currentWeekId` were ever pointed
+  at a bogus non-current week outside of tests. Fixed *in the test* (not in
+  application code, since this can only happen when a test deliberately
+  fakes the active week) by faking only `Date` — via
+  `vi.useFakeTimers({ toFake: ["Date"] })`, explicitly not full fake timers,
+  so ioredis/Prisma/Mongoose's real internal `setTimeout`-based I/O keeps
+  working — for the single request that needs it, setting "now" to one
+  minute into the fictional week's real start. A fresh login is also
+  minted inside that same faked window (rather than reusing the
+  already-issued token from the earlier login step), since the
+  already-issued token's real exp would otherwise look expired once
+  checked against a spoofed-2099 clock; a token minted while time-travelled
+  to 2099 remains trivially valid once later assertions revert to the real
+  clock (real-now is always earlier than a fake-future exp).
 
 ## Verification
 
@@ -719,3 +850,43 @@ It will be updated at every step.
   is wired correctly end-to-end through BullMQ. Cleaned up the
   worker-created `bull:weekly-reset:*` Redis keys and re-ran `npm run seed`
   afterward to leave the environment in a clean, reviewable demo state.
+- **Weeks/history/error-handling:** `npm run test tests/api.integration.test.ts`
+  → 10/10 passing (login for both a normal and an admin user; `POST
+  /earnings/earn`; `GET /leaderboard/top` and `/leaderboard/me` reflecting
+  it; `GET /weeks/current`'s `estimatedPrizePoolInCents` matching
+  `calculatePrizePool()` directly; `GET /weeks/:weekId/results` returning
+  `"in_progress"` with live Redis data pre-reset; `POST
+  /admin/weeks/:weekId/force-reset` 403ing a non-admin and 200ing the
+  admin; the same `/weeks/:weekId/results` call now returning
+  `"finalized"` with the Postgres-sourced row post-reset; `GET
+  /weeks/:weekId/prizes` returning the finalized single-player award
+  (correctly the *entire* pool, cross-checked against
+  `calculatePrizePool()` — matches `prizes.util.test.ts`'s own N=1 case);
+  the newly-active next week's `/results` and `/prizes` both correctly
+  empty and `"in_progress"`; `/users/me/history` containing the
+  now-finalized week). Full `npm run test` → 40/40 (all 5 prior suites
+  unaffected). `tsc --noEmit` clean.
+- **Weeks/history/error-handling:** Manual end-to-end walkthrough against
+  freshly reseeded demo data (`npm run seed`, current week `2026-W31`):
+  started `npm run dev`, called all 9 endpoints at least once via `curl` —
+  logged in as `demo_top_player` and `admin`; `POST /earnings/earn`
+  (`demo_top_player`'s earnings went from 5,098,445 to 5,099,445 cents);
+  `GET /leaderboard/top` and `/leaderboard/me` reflecting the new total at
+  rank 1; `GET /weeks/current` returning `weekId: "2026-W31"` with a
+  computed `weekStart`/`weekEnd` and a nonzero `estimatedPrizePoolInCents`;
+  `GET /weeks/2026-W31/results` (the still-active week) returning
+  `"status": "in_progress"` with 100 live entries; `GET
+  /weeks/2026-W30/results` (a seeded historical week) returning
+  `"status": "finalized"` with 100 Postgres-sourced entries; `GET
+  /weeks/2026-W30/prizes` returning `"finalized"` with 10 prize rows
+  summing to the seeded 1,000,000-cent pool; `POST
+  /admin/weeks/2026-W29/force-reset` (an already-finalized historical week,
+  chosen deliberately over the live `2026-W31` so the manual walkthrough
+  doesn't prematurely end the reviewer's actual in-progress demo week)
+  returning `"COMPLETED"` idempotently; `GET /users/me/history` for
+  `demo_top_player` returning the in-progress week's Mongo-only entry
+  (`rank: null`, since `2026-W31` has no `WeeklyResult` row yet). Re-ran
+  `npm run seed` afterward (the earn call above had mutated real seeded
+  demo state) to leave the environment clean for review, per the same
+  convention used after every prior manual-verification step that touches
+  real data.
