@@ -8,7 +8,6 @@ import { JumpToMyRankButton } from '../components/rank/JumpToMyRankButton'
 import { PrizePoolBanner } from '../components/prize/PrizePoolBanner'
 import { DevPanel } from '../components/demo/DevPanel'
 import { LeaderboardList } from '../components/leaderboard/LeaderboardList'
-import { LeaderboardRow } from '../components/leaderboard/LeaderboardRow'
 import { useAuth } from '../context/AuthContext'
 import { useCurrentWeek } from '../hooks/useCurrentWeek'
 import { useLeaderboardTop } from '../hooks/useLeaderboardTop'
@@ -64,22 +63,10 @@ export function LeaderboardPage() {
               entries={top.entries}
               currentUsername={user?.username}
               rowRefs={rowRefs}
+              surroundingEntries={showRankWindow ? myRank.entries : undefined}
             />
           )}
         </section>
-
-        {showRankWindow ? (
-          <section className="rounded-card border border-border bg-bg-surface p-4">
-            <div className="mb-2 text-center font-display text-lg tracking-widest text-text-secondary">
-              · · ·
-            </div>
-            <div className="flex flex-col gap-1">
-              {myRank.entries.map((entry) => (
-                <LeaderboardRow key={entry.rank} entry={entry} isCurrentUser={entry.isCurrentUser} />
-              ))}
-            </div>
-          </section>
-        ) : null}
       </div>
     </div>
   )

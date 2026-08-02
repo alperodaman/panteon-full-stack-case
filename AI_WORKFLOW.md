@@ -431,6 +431,21 @@ It will be updated at every step.
 - **Leaderboard UI ("Adım 8B"):** Explicit instruction to delete the
   Adım 8A `DesignSystemPreview` temporary page and its route once real
   pages exist.
+- **Leaderboard UI polish (post-Adım 8 bug fixes):** User identified
+  three concrete bugs and specified the exact fix for each, down to
+  implementation steps: (1) Top 100 list must scroll within its own
+  fixed-height container (~480px desktop / ~360px mobile, thin custom
+  scrollbar, top/bottom fade) instead of pushing the page down, with
+  the user's own row + ±3/±2 neighbors pinned as a separate panel
+  below the scroll area so their rank is visible without scrolling.
+  (2) Podium card size must be driven by `rank` (1/2/3), not by
+  layout/index position — rank 1 biggest, ranks 2 and 3 equal and
+  smaller, verified against shuffled test data. (3) At ≤480px the
+  podium must reflow to rank 1 full-width on top with ranks 2/3 side
+  by side below (not a fully stacked column), with mobile-specific
+  avatar/font/padding sizing and `text-overflow: ellipsis` /
+  `min-width: 0` guards against overflow. All three specs were
+  implemented as given in `LeaderboardList.tsx`/`Podium.tsx`.
 
 
 ## Decisions made / boilerplate produced by the AI
@@ -878,6 +893,22 @@ It will be updated at every step.
   `afterEach` (RTL's auto-cleanup isn't wired up automatically without
   Vitest's `globals: true`, which this repo intentionally avoids so
   `describe`/`it`/`expect` stay explicit imports).
+- **Leaderboard UI polish (post-Adım 8 bug fixes):** Root cause of the
+  podium size-hierarchy bug: the original per-rank styles used `pt-*`
+  (padding-top) to fake height differences under `items-end`
+  alignment, but more top padding makes a box *taller*, not shorter —
+  so rank 3 (`pt-8`, the most padding) rendered as the biggest card
+  and rank 1 (`pt-0`) the smallest, exactly inverted from intent.
+  Fixed by switching to explicit per-rank `h-*`/`border-*` classes
+  instead of a padding side-effect. Implementation choices left to the
+  AI within the user's spec: the exact scroll container heights
+  (`max-h-90`/`sm:max-h-120`, i.e. 360px/480px — Tailwind's canonical
+  spacing scale value nearest the requested pixel figures), the
+  `max-[480px]:` arbitrary-variant breakpoint (no built-in Tailwind
+  breakpoint sits at 480px), and widening `Avatar`'s `size` prop from
+  `number` to `number | string` (backwards compatible with existing
+  callers) so the podium could pass a `clamp()` fluid size for rank 1
+  vs. ranks 2/3 without a new component.
 
 ## Verification
 
@@ -1107,3 +1138,25 @@ It will be updated at every step.
   dev servers afterward; no seeded data was left in a mutated state
   beyond the same `demo_top_player` earnings bump already covered by
   the server's own re-seed convention.
+- **Leaderboard UI polish (post-Adım 8 bug fixes):** `npx tsc -b` and
+  `npm run build` both clean. Full manual walkthrough: `docker compose`
+  services already up, `server`'s `npm run dev` + fresh `npm run seed`,
+  `client`'s `npm run dev` driven headlessly with a temporary
+  `npm install --no-save playwright` (not `chromium-cli`, same fallback
+  used for prior Adım 8 verification; removed afterward, confirmed
+  `git status` shows no `package.json`/lockfile changes). Logged in via
+  DevPanel as `demo_regular_player` (seeded outside the top 100):
+  screenshot at 1280px confirmed the Top 100 box now shows only rows
+  4-12 (a fixed-height, internally-scrolled container) with the
+  "surrounding players" panel (rows 4999-5004, `demo_regular_player`
+  highlighted) pinned below it, no page-level scrolling required to see
+  either the podium or the user's own rank. Confirmed the podium's rank
+  1 card (`demo_top_player`) is visibly taller with a thicker gold
+  border than the equal-sized rank 2/3 cards. Screenshotted the
+  logged-out page at 375px, 390px, and 428px viewports: at all three,
+  rank 1 renders full-width on top with ranks 2 and 3 side by side
+  below (not 3-across, not fully stacked), usernames truncate with
+  ellipsis instead of overflowing, and the desktop 3-across layout
+  (verified at 1280px) is unaffected by the mobile breakpoint. No
+  console errors in any screenshot pass. Stopped both dev servers
+  afterward.
