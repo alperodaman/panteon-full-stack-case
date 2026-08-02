@@ -1,0 +1,64 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum WeeklyResetStatus {
+  PENDING
+  DISTRIBUTING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  email     String   @unique
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+
+  weeklyResults      WeeklyResult[]
+  prizeDistributions PrizeDistribution[]
+}
+
+model WeeklyResult {
+  id              String   @id @default(uuid())
+  weekId          String
+  userId          String
+  rank            Int
+  earningsInCents Int
+  createdAt       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([weekId, userId])
+}
+
+model PrizeDistribution {
+  id                 String   @id @default(uuid())
+  weekId             String
+  userId             String
+  rank               Int
+  prizeAmountInCents Int
+  poolTotalInCents   Int
+  distributedAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model WeeklyResetJob {
+  id        String            @id @default(uuid())
+  weekId    String            @unique
+  status    WeeklyResetStatus @default(PENDING)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}
