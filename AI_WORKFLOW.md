@@ -245,10 +245,6 @@ It will be updated at every step.
   duplication; unit-test `requireAdmin`'s 403 path; and load-test the rate
   limiter by sending 60+ rapid `/earnings/earn` requests as the same user
   and confirming a 429 appears.
-- **Docs:** Explicit instruction to update both `README.md` (seed script
-  behavior, user-count rationale, which usernames can log in, JWT expiry
-  rationale, rate-limit rationale) and `AI_WORKFLOW.md` (this entry) to
-  reflect the algorithm/decisions actually implemented in this step.
 - **Prize distribution:** Full case spec restated as the ground truth for
   N=100: prize pool = 2% of total weekly earnings; rank 1 = 20% of pool,
   rank 2 = 15%, rank 3 = 10%; remaining 55% split across ranks 4-100
@@ -276,10 +272,60 @@ It will be updated at every step.
   percentages exactly), N=5, N=3 (no ranks 4-100 at all, checking the 20:15:10
   ratio is preserved), N=1 (single player takes the whole pool), and dedicated
   rounding-remainder tests for both the rank-4-exists and rank-4-absent cases.
-- **Prize distribution:** Explicit instruction to update `README.md` with a
-  short "Prize Distribution Algorithm" section (spec formula, then 2-3
-  sentences on why a normalized general formula was used) and to log this
-  decision (and what the AI actually implemented) in `AI_WORKFLOW.md`.
+- **Weekly reset job:** Cron schedule stated as a settled decision, not open
+  for redesign: every Monday 00:00 UTC. Rationale given up front and
+  required to be used verbatim as the BullMQ repeatable job's cron
+  expression (`0 0 * * 1`, UTC): this is the natural boundary of the
+  `weekId` format already in use (`"YYYY-Www"`, ISO 8601 week, which itself
+  starts on Monday per the ISO spec) — so the moment the cron fires and the
+  moment `week.util.ts`'s week-boundary math says a week starts/ends agree
+  with each other. UTC was specified so the job's behavior doesn't depend on
+  whichever timezone the server process happens to run in.
+- **Weekly reset job:** Full pseudocode for `resetWeek(weekId)` given as the
+  exact flow to implement, not a sketch to reinterpret:
+  `getOrCreateResetJob` → if already `completed`, return; if `pending`, run
+  cutover and mark `distributing`; then always read the archived
+  leaderboard, run step 5's `calculatePrizeDistribution` over it, write the
+  Postgres transaction, write the Mongo snapshot, mark `completed`.
+- **Weekly reset job:** File/module scope specified exactly:
+  `server/src/modules/weeks/weeklyResetJob.repository.ts` (`getOrCreateResetJob`,
+  catching Postgres's `P2002` unique-violation on `weekId` and re-reading the
+  existing row rather than erroring; `updateJobStatus`); `server/src/jobs/weeklyReset.job.ts`
+  (`resetWeek` applying the pseudocode verbatim; `readArchiveLeaderboard`
+  returning `[]` on an empty/never-earned week rather than erroring;
+  `writePostgresTransaction` using one Prisma `$transaction` for
+  `WeeklyResult` + `PrizeDistribution`, feeding step 5's
+  `calculatePrizeDistribution` with the archived data; `writeMongoSnapshot`
+  against `server/src/db/mongo/models/weeklySnapshot.model.ts`, explicitly
+  required to be best-effort — a Mongo failure must not block the main flow,
+  just get logged, with the reasoning written into the code as a comment);
+  on any error, the job status must be set to `FAILED`.
+- **Weekly reset job:** BullMQ wiring specified exactly:
+  `server/src/jobs/queue.ts` (Queue definition), `server/src/jobs/worker.ts`
+  (repeatable job registration using the Monday-00:00-UTC cron expression
+  above, weekId computed via the project's existing ISO-week helpers), and a
+  separate entry point `server/src/worker.ts` with its own `npm run worker`
+  script — explicitly called out as needing to be a separate process from
+  the API server, per the stateless-architecture decision already made in
+  step 1.
+- **Weekly reset job:** Admin demo endpoint specified exactly:
+  `POST /admin/weeks/:weekId/force-reset`, behind `requireAdmin`, calling
+  the *same* `resetWeek()` function the worker's cron job calls (not a
+  parallel implementation) — explicitly framed as a README-documented "demo
+  shortcut" so a reviewer isn't stuck waiting for the real Monday boundary
+  to test the feature.
+- **Weekly reset job:** Test file and scenarios specified exactly:
+  `server/tests/weeklyReset.test.ts`, calling `resetWeek` against a seeded
+  Redis leaderboard, verifying the resulting Postgres rows, cross-checking
+  the prize amounts against step 5's normalized formula (not hand-computed
+  numbers), and calling `resetWeek` a second time with the same `weekId` to
+  prove idempotency.
+- **Weekly reset job:** Verification requirements specified exactly:
+  `npm run test tests/weeklyReset.test.ts` green; calling force-reset with
+  an admin token and showing the resulting Postgres rows match the
+  normalized formula; confirming the BullMQ repeatable job is registered
+  with the correct cron expression.
+
 
 ## Decisions made / boilerplate produced by the AI
 
@@ -478,6 +524,72 @@ It will be updated at every step.
   `Math.floor(pool * 0.2)` comparison can be off by the same 1-cent rounding
   slack that the remainder-to-rank-4 rule is designed to absorb. Verified this
   is floating-point noise, not a logic bug, before relaxing the assertion.
+- **Weekly reset job:** `readArchiveLeaderboard` needs earnings per player,
+  but `weekCutover.lua` deletes `earnings:week:{weekId}` as part of cutover
+  (by design, from step 2-3) before this function ever runs — so raw
+  earnings can't be read back from a hash lookup post-cutover. Instead,
+  earnings are decoded directly from the archived ZSET's compound score
+  (`earningsInCents * 20000 + (20000 - minutesSinceWeekStart)`, from
+  `earnScore.lua`). Discovered and fixed a genuine off-by-one in the naive
+  decode: the tiebreak term can equal exactly `20000` (an earn at
+  `minutesSinceWeekStart = 0`), which would make `floor(score / 20000)`
+  overcount earnings by one in that single case; decoding as
+  `floor((score - 1) / 20000)` corrects it losslessly for every valid
+  tiebreak value. This was caught by reasoning through the score formula's
+  value range, not by a failing test (the test's fixed `minutesSinceWeekStart`
+  didn't happen to hit the edge case) — flagging it here since it's exactly
+  the kind of silent, correctness-affecting bug that's easy to miss.
+- **Weekly reset job:** The case spec's "2% of total weekly earnings" pool
+  basis wasn't pinned down by the user's pseudocode to top-100-only vs. every
+  earner that week. Chose *every* archived player (via a cursor-batched
+  `ZSCAN` over the full archive ZSET, not `ZRANGE 0 -1`, so a weekly batch
+  job never blocks Redis with one huge command at scale), since "total
+  weekly earnings" reads as the whole week's economy, not just the leaderboard
+  cutoff — while `WeeklyResult`/`PrizeDistribution` themselves still only
+  ever cover the top 100, per the existing "cutover only ever writes the top
+  100 into Postgres" design from the leaderboard module.
+- **Weekly reset job:** The given pseudocode's `if (job.status === 'pending')`
+  branch (run cutover, mark `distributing`) was widened to "run cutover
+  whenever status isn't already `distributing`" (i.e. also on a `FAILED`
+  retry), rather than implementing exactly the two-branch pseudocode
+  verbatim. Justification: a `FAILED` job could have failed either before or
+  after cutover actually ran, and there's no way to tell which from the
+  status alone (`FAILED` overwrites whatever the prior status was) — but
+  `weekCutover.lua` is already proven idempotent in `tests/lua.test.ts`, so
+  it's always safe to re-run it on a `FAILED` retry rather than risk
+  silently skipping a cutover that never actually happened.
+- **Weekly reset job:** `writePostgresTransaction` deletes any existing
+  `WeeklyResult`/`PrizeDistribution` rows for the `weekId` before
+  `createMany`, rather than assuming a first-time insert — needed so a retry
+  after a partial failure (cutover succeeded, Postgres write didn't) doesn't
+  throw on the `[weekId, userId]` unique constraint or duplicate rows.
+- **Weekly reset job:** `getNextWeekId(weekId)` was added to
+  `week.util.ts` (not explicitly requested) — the admin force-reset endpoint
+  needs to derive "the week after this one" for an arbitrary, possibly-past
+  `weekId` a reviewer passes in, which is different from the worker's
+  `resolveResetWeekIds()` (also added, in `weeklyReset.job.ts`), which
+  derives both weekIds from "now" at the Monday-00:00-UTC cron boundary.
+- **Weekly reset job:** The task description referenced `server/src/lib/weekUtils.ts`
+  for weekId computation; no such file exists in this repo — the project's
+  actual ISO-week helpers live in `server/src/modules/leaderboard/week.util.ts`
+  (added in the leaderboard-module step). Reused that file (extended with
+  `getNextWeekId`) rather than creating a duplicate `src/lib/weekUtils.ts`,
+  treating the referenced path as shorthand rather than a literal
+  instruction to fork the week-math logic into a second location.
+- **Weekly reset job:** BullMQ needs its own Redis connection with
+  `maxRetriesPerRequest: null` (its documented requirement for
+  blocking/retry semantics) — added a dedicated `ioredis` connection in
+  `src/jobs/queue.ts` rather than reusing the app's shared `redis` singleton,
+  which is tuned for normal request/response use.
+- **Weekly reset job:** Added `start:worker` (`node dist/worker.js`) to
+  `package.json` alongside the requested `worker` (dev) script, mirroring
+  the existing `dev`/`start` pairing for the API server, for production
+  parity.
+- **Weekly reset job:** `weeks.controller.ts` validates the `:weekId` route
+  param against the `YYYY-Www` shape with zod before calling `resetWeek`,
+  matching the existing validate-then-call pattern used by
+  `auth.controller.ts`/`leaderboard.controller.ts`, rather than letting a
+  malformed weekId fail deeper in the stack with a less clear error.
 
 ## Verification
 
@@ -571,3 +683,39 @@ It will be updated at every step.
   single player; empty input returning `[]`; and two dedicated
   rounding-remainder tests confirming the leftover cent(s) land on rank 4 when
   present and on rank 1 when rank 4 doesn't exist (N=3 case).
+- **Weekly reset job:** `npm run test tests/weeklyReset.test.ts` → 2/2
+  passing: the main scenario (cutover ran, `WeeklyResult` ranks/earnings
+  match exactly, `PrizeDistribution` amounts cross-checked against
+  `calculatePrizeDistribution` directly rather than hand-computed numbers,
+  the Mongo `WeeklySnapshot` document matches, then a second `resetWeek`
+  call for the same `weekId` is proven to leave row counts unchanged) and a
+  no-earn-calls-this-week scenario (empty archive, job still completes).
+  Full `npm run test` → 30/30 (all prior suites unaffected). `tsc --noEmit`
+  and `npm run build` both clean.
+- **Weekly reset job:** Debugged an early 5s test timeout by isolating the
+  hang to `writeMongoSnapshot`: the test file wasn't calling `connectMongo()`
+  (unlike `leaderboard.service.test.ts`, which never touches Mongo), so
+  Mongoose buffered the `findOneAndUpdate` call for its full 10s timeout
+  before failing — longer than Vitest's 5s default. Fixed by adding
+  `connectMongo()`/`mongoose.connection.close()` to the test's
+  `beforeAll`/`afterAll`, not by increasing the test timeout, since the real
+  bug was a missing connection, not a slow one.
+- **Weekly reset job:** Manual end-to-end walkthrough against the seeded
+  demo data (`npm run seed`, current week `2026-W31`, 10,003 users): started
+  `npm run dev`, logged in as `admin`, called
+  `POST /admin/weeks/2026-W31/force-reset` → `{"status":"COMPLETED"}`.
+  Verified in Postgres: `WeeklyResult` has exactly 100 rows for
+  `2026-W31`; `PrizeDistribution` ranks 1-3 are exactly 20%/15%/10% of
+  `poolTotalInCents` and `SUM(prizeAmountInCents)` equals `poolTotalInCents`
+  to the cent; `WeeklyResetJob.status` is `COMPLETED`. Called the same
+  force-reset endpoint a second time — row counts stayed at 100 (no
+  duplication), confirming idempotency live, not just in the test suite.
+  Confirmed `demo_top_player` (a non-admin) gets `403 Admin role required`
+  from the same endpoint. Stopped the API, started `npm run worker`
+  separately, and confirmed via `redis-cli` (`HGETALL
+  bull:weekly-reset:repeat:<hash>`) that the registered repeatable job has
+  `pattern: "0 0 * * 1"`, `tz: "UTC"`, and a next-run timestamp that decodes
+  to `2026-08-03T00:00:00.000Z` — a Monday, confirming the cron expression
+  is wired correctly end-to-end through BullMQ. Cleaned up the
+  worker-created `bull:weekly-reset:*` Redis keys and re-ran `npm run seed`
+  afterward to leave the environment in a clean, reviewable demo state.

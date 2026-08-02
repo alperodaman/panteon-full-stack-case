@@ -34,3 +34,12 @@ export function getMinutesSinceWeekStart(weekId: string, now: Date = new Date())
   const start = getIsoWeekStart(weekId);
   return Math.floor((now.getTime() - start.getTime()) / 60000);
 }
+
+// Needed by the weekly reset job/admin force-reset endpoint to derive the
+// week that should become active once `weekId` is cut over, without relying
+// on "now" -- a force-reset can be called for a past or arbitrary weekId.
+export function getNextWeekId(weekId: string): string {
+  const start = getIsoWeekStart(weekId);
+  const nextStart = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000);
+  return getIsoWeekId(nextStart);
+}

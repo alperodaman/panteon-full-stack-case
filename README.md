@@ -250,3 +250,64 @@ normalization factor is 1 and the output is identical to the spec's
 users have earned anything), it guarantees the entire pool still gets
 distributed instead of leaving the undefined "ranks that don't exist"
 share undistributed.
+
+## Weekly reset job (`src/jobs/weeklyReset.job.ts`, `src/jobs/queue.ts`, `src/jobs/worker.ts`)
+
+Runs **every Monday at 00:00 UTC** (`0 0 * * 1`, BullMQ repeatable job with
+`tz: "UTC"`). This exact time was chosen because it lines up with the
+`weekId` format itself (`"YYYY-Www"`, ISO 8601 week — see `week.util.ts`):
+ISO weeks start on Monday, so the cron firing moment and the week-boundary
+math agree on where a week begins and ends. UTC keeps that boundary fixed
+regardless of which timezone the server process happens to run in.
+
+The job (`resetWeek(weekId, nextWeekId)`) runs the exact flow specified for
+this step:
+
+1. `getOrCreateResetJob(weekId)` — reads/creates the Postgres
+   `WeeklyResetJob` row for this week (unique on `weekId`); if it's already
+   `COMPLETED`, `resetWeek` returns immediately (idempotent no-op).
+2. If cutover hasn't happened yet (status isn't `DISTRIBUTING`), runs
+   `weekCutover.lua` (archives the Redis leaderboard, drops the live
+   earnings hash, advances `config:currentWeekId`) and marks the job
+   `DISTRIBUTING`. `weekCutover.lua` is itself idempotent, so this is safe
+   to re-run on a retry after a `FAILED` job even if it's unclear whether
+   the previous attempt's cutover actually completed.
+3. Reads the archived leaderboard's top 100 back out of Redis. The raw
+   earnings hash is already gone at this point (cutover deletes it), so
+   earnings are recovered by decoding the ZSET's compound score
+   (`earningsInCents = floor((score - 1) / 20000)` — the `-1` corrects for
+   the one tiebreak value, `20000`, that would otherwise carry into the
+   next earnings unit).
+4. Computes the prize pool (2% of *all* archived earnings, not just the top
+   100 — scanned via `ZSCAN`) and runs it through step 5's
+   `calculatePrizeDistribution` (the same normalized formula, unchanged).
+5. Writes `WeeklyResult` + `PrizeDistribution` inside one Postgres
+   `$transaction` (delete-then-recreate for the week, so a retry after a
+   partial failure doesn't duplicate rows), then writes a Mongo
+   `WeeklySnapshot` document. The Mongo write is **best-effort**: it's
+   wrapped in its own try/catch and only logged on failure, since by that
+   point the money-relevant Postgres write has already succeeded and
+   Mongo only backs the history UI's point-in-time listing — a Mongo
+   outage must not fail (or endlessly retry) an already-completed payout.
+6. Marks the job `COMPLETED`, or `FAILED` (re-throwing) if anything above
+   errors.
+
+**Worker is a separate process** (`npm run worker`, `src/worker.ts`) from
+the API (`npm run dev` / `src/server.ts`) — the API is stateless and meant
+to scale horizontally, while the repeatable cron job must be scheduled/run
+by exactly one worker role, not by every API instance.
+
+**Demo shortcut:** `POST /admin/weeks/:weekId/force-reset` (behind
+`requireAuth` + `requireAdmin`, login as `admin`) calls the *exact same*
+`resetWeek()` the worker's cron job calls, so a reviewer can trigger a
+given week's cutover + prize distribution on demand instead of waiting for
+the real Monday 00:00 UTC boundary.
+
+```bash
+# terminal 1
+npm run dev
+# terminal 2
+npm run worker
+# force a specific week's reset without waiting for Monday:
+curl -X POST localhost:3000/admin/weeks/2026-W31/force-reset -H "Authorization: Bearer <admin token>"
+```

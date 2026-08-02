@@ -8,6 +8,7 @@ import "./config/luaScripts";
 import { connectMongo, mongoose } from "./config/mongo";
 import { leaderboardRouter } from "./modules/leaderboard/leaderboard.routes";
 import { authRouter } from "./modules/auth/auth.routes";
+import { weeksRouter } from "./modules/weeks/weeks.routes";
 
 const app = express();
 
@@ -15,6 +16,7 @@ app.use(cors());
 app.use(express.json());
 app.use(authRouter);
 app.use(leaderboardRouter);
+app.use(weeksRouter);
 
 app.get("/health", async (_req, res) => {
   const [postgres, redisStatus, mongo] = await Promise.all([
