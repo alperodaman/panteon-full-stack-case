@@ -1,50 +1,53 @@
 # AI Workflow Log
 
-Bu dosya, Claude ile yapılan işbirliğinde hangi kararların kullanıcı
-tarafından verildiğini, hangi kısımların AI tarafından üretildiğini takip
-eder. Her adımda güncellenecektir.
+This file tracks which decisions were made by the user and which
+boilerplate was produced by the AI during collaboration with Claude.
+It will be updated at every step.
 
-## Adım 1 — Repo iskeleti, Docker, Prisma şeması
+## Step 1 — Repo skeleton, Docker, Prisma schema
 
-### Kullanıcının verdiği kararlar
-- Monorepo tooling (workspaces/lerna/turborepo) KULLANILMAYACAK; `server/`
-  ve `client/` tamamen bağımsız projeler, kökte package.json yok.
+### Decisions made by the user
+- Monorepo tooling (workspaces/lerna/turborepo) will NOT be used;
+  `server/` and `client/` are fully independent projects, no root
+  package.json.
 - Stack: Express + TypeScript, PostgreSQL (Prisma), MongoDB (Mongoose),
   Redis (ioredis), BullMQ, JWT, Zod, Pino, express-rate-limit +
   rate-limit-redis, faker.
-  services PG/Redis/Mongo native kurulu değil — hepsi Docker.
-  - Prisma modelleri (User, WeeklyResult, PrizeDistribution,
-  WeeklyResetJob) alan ve constraint (unique) düzeyinde verildi.
-- README'nin başına proje yapısını netleştiren paragraf (case
-  gereksinimine referansla) birebir eklendi.
-- `tsconfig.json`: `moduleResolution: node` kullanımı TS'in "deprecated,
-  TS 7.0'da kaldırılacak" uyarısını veriyordu. AI önce iki seçeneği
-  (susturmak vs. `node16`'ya geçmek) artı/eksileriyle anlattı; kullanıcı
-  `node16`'yı seçti — `module` de (TS'in zorunlu kıldığı eşleşme
-  nedeniyle) `Node16` olarak güncellendi. Deprecated olmayan, Node'un
-  gerçek çözümleme davranışıyla birebir örtüşen algoritma.
+- Postgres/Redis/Mongo are not installed natively on the dev machine —
+  everything runs via Docker.
+- Prisma models (User, WeeklyResult, PrizeDistribution, WeeklyResetJob)
+  were specified at the field and constraint (unique) level.
+- The paragraph clarifying the project structure (referencing the case's
+  "client and server code should be in separate projects" requirement)
+  was added verbatim to the top of the README.
+- `tsconfig.json`: using `moduleResolution: node` triggered TypeScript's
+  "deprecated, will be removed in TS 7.0" warning. The AI first explained
+  two options (silence the warning vs. switch to `node16`) with their
+  pros/cons; the user chose `node16` — `module` was also updated to
+  `Node16` (TypeScript requires this pairing). This is the non-deprecated
+  algorithm that matches Node's actual resolution behavior.
 
-### AI'ın verdiği kararlar / ürettiği boilerplate
-- `tsconfig.json`: `target: ES2022` seçildi; `module`/`moduleResolution`
-  ilk aşamada `commonjs`/`node` idi (soruldu değil, gerekçelendirildi:
-  ts-node-dev + bullmq/mongoose/prisma gibi CJS-ağırlıklı paketlerle ESM
-  interop sürtünmesinden kaçınmak için). Sonradan `Node16`/`Node16`
-  olarak güncellendi — bkz. kullanıcı kararı.
-- Migration adı: `init` (case'de tercih belirtilmediği için).
-- `src/config/env.ts`: zod ile env validation, hatalıysa process crash
-  eder (sessiz fallback yok).
+### Decisions made / boilerplate produced by the AI
+- `tsconfig.json`: `target: ES2022` was chosen; `module`/`moduleResolution`
+  were initially `commonjs`/`node` (not asked, justified: to avoid ESM
+  interop friction between ts-node-dev and CJS-heavy packages like
+  bullmq/mongoose/prisma). Later updated to `Node16`/`Node16` — see the
+  user decision above.
+- Migration name: `init` (no preference specified in the case).
+- `src/config/env.ts`: env validation with zod; the process crashes
+  immediately on missing/invalid env vars (no silent fallback).
 - `src/config/postgres.ts`, `redis.ts`, `mongo.ts`: singleton pattern
-  (global cache) ile hot-reload'da çoklu instance önlendi; redis/mongo
-  connect/error event'leri pino ile loglanıyor.
-- `src/server.ts`: sadece `/health` endpoint'i — pg/redis/mongo
-  bağlantı durumunu paralel kontrol edip JSON döner.
-- Docker Compose: healthcheck + named volume + `.env`'den okunan (fakat
-  sensible default'lu) env değişkenleri.
+  (global cache) to prevent multiple instances on hot-reload;
+  redis/mongo connect/error events are logged via pino.
+- `src/server.ts`: a single `/health` endpoint — checks pg/redis/mongo
+  connectivity in parallel and returns JSON.
+- Docker Compose: healthcheck + named volumes + env variables read from
+  `.env` (with sensible defaults, not hardcoded).
 
-### Doğrulama
-- `docker compose up -d` → `docker compose ps` ile postgres/redis/mongo
-  üçü de `healthy`.
-- `npx prisma migrate dev --name init` başarıyla çalıştı, Prisma Client
-  generate edildi.
-- `npm run dev` sonrası `curl localhost:3000/health` →
+### Verification
+- `docker compose up -d` → `docker compose ps` shows postgres/redis/mongo
+  all `healthy`.
+- `npx prisma migrate dev --name init` ran successfully, Prisma Client
+  was generated.
+- `npm run dev` followed by `curl localhost:3000/health` →
   `{"status":"ok","services":{"postgres":"up","redis":"up","mongo":"up"}}`.

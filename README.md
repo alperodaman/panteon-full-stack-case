@@ -1,59 +1,59 @@
-## Proje Yapısı
+## Project Structure
 
-Bu repo, aralarında hiçbir kod paylaşımı olmayan İKİ AYRI PROJE içerir:
-`server/` ve `client/`. Her biri kendi package.json'ı, kendi bağımlılık
-ağacı, kendi tsconfig'i ve kendi test/build pipeline'ıyla tamamen bağımsız
-çalışır. Aralarındaki tek bağlantı HTTP API'dir (client, server'a sadece
-network üzerinden istek atar). Tek repo altında tutulmalarının sebebi
-sadece review kolaylığı ve tek `docker compose up` ile local ortamın
-ayağa kalkabilmesidir — mimari veya kod düzeyinde hiçbir bağımlılıkları
-yoktur.
+This repo contains TWO SEPARATE PROJECTS with no code sharing between
+them: `server/` and `client/`. Each runs fully independently with its
+own package.json, its own dependency tree, its own tsconfig, and its
+own test/build pipeline. The only connection between them is the HTTP
+API (the client only talks to the server over the network). They are
+kept in a single repo purely for review convenience and so the local
+environment can be brought up with a single `docker compose up` — they
+have no architectural or code-level dependency on each other.
 
 # Panteon Leaderboard — Server
 
-Haftalık leaderboard sistemi. Stack: Node.js + Express + TypeScript,
+Weekly leaderboard system. Stack: Node.js + Express + TypeScript,
 PostgreSQL (Prisma), MongoDB (Mongoose), Redis (ioredis).
 
-## Local geliştirme ortamını ayağa kaldırma
+## Bringing up the local development environment
 
-1. Bağımlılık servislerini (Postgres, Redis, MongoDB) Docker ile başlat:
+1. Start the dependency services (Postgres, Redis, MongoDB) via Docker:
 
    ```bash
    docker compose up -d
-   docker compose ps   # üçünün de "healthy" olduğunu doğrula
+   docker compose ps   # verify all three are "healthy"
    ```
 
-2. Server projesinin bağımlılıklarını kur:
+2. Install the server project's dependencies:
 
    ```bash
    cd server
    npm install
    ```
 
-3. `server/.env.example` dosyasını `server/.env` olarak kopyala ve
-   gerekirse (örn. port çakışması varsa) değerleri güncelle:
+3. Copy `server/.env.example` to `server/.env` and update the values if
+   needed (e.g. in case of a port conflict):
 
    ```bash
    cp .env.example .env
    ```
 
-4. İlk migration'ı çalıştır (Postgres container'ı ayaktayken):
+4. Run the initial migration (with the Postgres container up):
 
    ```bash
    npx prisma migrate dev
    ```
 
-5. Dev server'ı başlat:
+5. Start the dev server:
 
    ```bash
    npm run dev
    ```
 
-6. Doğrula:
+6. Verify:
 
    ```bash
    curl localhost:3000/health
    ```
 
-   Postgres, Redis ve MongoDB bağlantılarının durumunu içeren bir JSON
-   dönmelidir.
+   Should return a JSON payload with the connectivity status of
+   Postgres, Redis, and MongoDB.
