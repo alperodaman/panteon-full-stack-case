@@ -25,7 +25,7 @@ export function MyRankCard() {
   return (
     <div
       data-testid="my-rank-card"
-      className="sticky top-0 z-10 flex items-center gap-4 rounded-card border-2 border-accent bg-bg-surface p-4 shadow-lg sm:static"
+      className="flex items-center gap-4 rounded-card border-2 border-accent bg-bg-surface p-4 shadow-lg"
     >
       <Avatar username={user.username} size={44} />
       <div className="flex flex-1 flex-col">
