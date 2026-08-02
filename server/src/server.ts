@@ -4,12 +4,15 @@ import { env } from "./config/env";
 import { logger } from "./logger";
 import { prisma } from "./config/postgres";
 import { redis } from "./config/redis";
+import "./config/luaScripts";
 import { connectMongo, mongoose } from "./config/mongo";
+import { leaderboardRouter } from "./modules/leaderboard/leaderboard.routes";
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(leaderboardRouter);
 
 app.get("/health", async (_req, res) => {
   const [postgres, redisStatus, mongo] = await Promise.all([
