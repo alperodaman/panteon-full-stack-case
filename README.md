@@ -228,3 +228,25 @@ without a real game client:
 
 At the end it prints the total user count, the current/historical week
 ids, and the three login usernames with their resulting ranks.
+
+## Prize distribution algorithm (`src/modules/prizes/prizes.util.ts`)
+
+The case spec (assuming a full 100-player leaderboard): the weekly prize
+pool is 2% of total weekly earnings; rank 1 gets 20% of the pool, rank 2
+gets 15%, rank 3 gets 10%, and the remaining 55% is split across ranks
+4-100 proportional to `1/rank`, with any rounding remainder added to
+rank 4's share so the pool is distributed to the exact cent.
+
+That formula is only defined for exactly 100 ranked players. Rather than
+branching into separate N<4 / 4≤N<100 / N=100 cases, `prizes.util.ts`
+computes a fixed `baseWeight` per rank (20/15/10 for ranks 1-3, `55 *
+(1/rank) / Σ(1/r, r=4..100)` for ranks 4-100) and normalizes by the sum
+of base weights for the ranks that actually exist, then applies the same
+floor+remainder-to-rank-4 (or rank 1, if rank 4 doesn't exist) rounding
+rule. At N=100 the base weights already sum to exactly 100, so the
+normalization factor is 1 and the output is identical to the spec's
+20%/15%/10%/55%-proportional formula — this is verified directly in
+`tests/prizes.util.test.ts`. For N<100 (e.g. a week where fewer than 100
+users have earned anything), it guarantees the entire pool still gets
+distributed instead of leaving the undefined "ranks that don't exist"
+share undistributed.

@@ -249,6 +249,37 @@ It will be updated at every step.
   behavior, user-count rationale, which usernames can log in, JWT expiry
   rationale, rate-limit rationale) and `AI_WORKFLOW.md` (this entry) to
   reflect the algorithm/decisions actually implemented in this step.
+- **Prize distribution:** Full case spec restated as the ground truth for
+  N=100: prize pool = 2% of total weekly earnings; rank 1 = 20% of pool,
+  rank 2 = 15%, rank 3 = 10%; remaining 55% split across ranks 4-100
+  inversely proportional to rank (`w(rank) = 1/rank`); rounding remainder
+  added to rank 4 so the pool is distributed to the exact cent.
+- **Prize distribution:** Explicit decision on the N<100 case (fewer than
+  100 ranked players in a given week): rather than writing separate
+  if/else branches for N<4 / 4≤N<100 / N=100, use one normalized formula —
+  define a fixed `baseWeight(rank)` (20/15/10 for ranks 1-3,
+  `55 * (1/rank) / Σ(1/r, r=4..100)` for ranks 4-100), then for whatever
+  ranks actually exist (1..min(N,100)), normalize:
+  `normalizedWeight(rank) = baseWeight(rank) / Σ(baseWeight(r) over existing ranks)`,
+  and `prizeAmountInCents(rank) = normalizedWeight(rank) * pool`. Explicitly
+  justified as not being over-engineering: at N=100 the base weights already
+  sum to exactly 100, so the normalization factor is mathematically 1 and the
+  output is identical to the plain spec formula — zero behavioral difference
+  at the case's own reference scenario, with the benefit of guaranteeing full
+  pool distribution at any N. Rounding remainder rule: goes to rank 4 if it
+  exists among the ranked players, otherwise to rank 1.
+- **Prize distribution:** File scope specified exactly:
+  `server/src/modules/prizes/prizes.util.ts` as a fully pure module (no DB/IO)
+  exposing `calculatePrizePool`, `calculateBaseWeights`, and
+  `calculatePrizeDistribution`; `server/tests/prizes.util.test.ts` covering
+  N=100 (proving the normalized formula matches the spec's raw 20/15/10/55%
+  percentages exactly), N=5, N=3 (no ranks 4-100 at all, checking the 20:15:10
+  ratio is preserved), N=1 (single player takes the whole pool), and dedicated
+  rounding-remainder tests for both the rank-4-exists and rank-4-absent cases.
+- **Prize distribution:** Explicit instruction to update `README.md` with a
+  short "Prize Distribution Algorithm" section (spec formula, then 2-3
+  sentences on why a normalized general formula was used) and to log this
+  decision (and what the AI actually implemented) in `AI_WORKFLOW.md`.
 
 ## Decisions made / boilerplate produced by the AI
 
@@ -422,6 +453,31 @@ It will be updated at every step.
   hand-mocked `req`/`res` objects rather than a full `supertest` HTTP
   round-trip, since the middleware functions have no external dependencies
   beyond `jsonwebtoken`/`env` and don't need a running server to exercise.
+- **Prize distribution:** `calculateBaseWeights(maxRank)` computes the
+  ranks-4-100 harmonic denominator (`Σ(1/r, r=4..100)`) as a fixed constant
+  regardless of `maxRank` — it is not recomputed over a shorter range when
+  fewer players exist, since the spec's per-rank weight for rank r is
+  defined relative to the full 97-term harmonic series, not relative to
+  however many of those ranks happen to be populated this week; only the
+  *normalization* step (dividing by the sum of base weights for ranks that
+  actually exist) adapts to N.
+- **Prize distribution:** `calculatePrizeDistribution` computes each award as
+  `Math.floor(normalizedWeight * pool)`, then adds `pool - sum(floors)` (the
+  leftover from flooring every share) entirely onto rank 4's award if a rank-4
+  player exists in the input, else onto rank 1's — this both implements the
+  spec's "remainder to rank 4" rule and is what guarantees the sum of all
+  awards equals `pool` exactly, to the cent, for any N.
+- **Prize distribution:** `calculatePrizeDistribution` derives `maxRank` from
+  `Math.min(Math.max(...ranks in the input), 100)` rather than trusting
+  `rankedPlayers.length` — defensive against the input not being a dense
+  `1..N` sequence (e.g. a future caller passing a sparse rank list), since
+  `calculateBaseWeights` is keyed by actual rank value, not array position.
+- **Prize distribution:** Test suite added floating-point tolerance (±1 cent)
+  on the N=100 top-3-percentage assertions instead of exact equality — floats
+  summed over 97 terms don't land on precisely `100.0`, so the plain
+  `Math.floor(pool * 0.2)` comparison can be off by the same 1-cent rounding
+  slack that the remainder-to-rank-4 rule is designed to absorb. Verified this
+  is floating-point noise, not a logic bug, before relaxing the assertion.
 
 ## Verification
 
@@ -506,3 +562,12 @@ It will be updated at every step.
 - **Auth + seed:** Re-ran `npm run seed` once more after the manual
   `curl`/rate-limit testing above (which had written real earn events) to
   leave the environment in a clean, reviewable demo state.
+- **Prize distribution:** `npm run test tests/prizes.util.test.ts` → 11/11
+  passing, including: N=100 matching the case spec's 20%/15%/10% top-3 shares
+  and the pool summing exactly (proving the normalized formula is
+  behaviorally identical to the raw spec formula at N=100); N=5 and N=3 (no
+  ranks 4-100 present) both summing exactly to the pool, with N=3 additionally
+  checked to preserve the 20:15:10 ratio; N=1 awarding the entire pool to the
+  single player; empty input returning `[]`; and two dedicated
+  rounding-remainder tests confirming the leftover cent(s) land on rank 4 when
+  present and on rank 1 when rank 4 doesn't exist (N=3 case).
