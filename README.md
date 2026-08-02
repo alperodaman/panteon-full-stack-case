@@ -362,3 +362,125 @@ MongoDB from `docker compose up -d`; exercises every endpoint above except
 cd server
 npm run test tests/api.integration.test.ts
 ```
+
+# Panteon Leaderboard — Client
+
+React + TypeScript SPA in `client/`, fully independent from `server/`
+(own `package.json`, own `node_modules`, own `tsconfig.json` — see
+"Project Structure" above). Stack: Vite, Tailwind CSS, TanStack Query,
+react-router, ky.
+
+## Bringing up the client
+
+```bash
+cd client
+npm install
+npm run dev
+```
+
+By default the client talks to `http://localhost:3000/` (see
+`.env.local`, `VITE_API_URL`) — bring up `docker compose`, run the
+`server` (`npm run dev`) and its `npm run seed` script first so there's
+real leaderboard/user data to show. Open `http://localhost:5173`.
+
+## Design system (`src/styles/tokens.css`)
+
+All colors, fonts, and radii used by components come from CSS custom
+properties defined in `src/styles/tokens.css`, split into a dark
+palette (`:root`) and a light palette (`[data-theme="light"]`), plus
+three theme-independent `--rank-gold`/`--rank-silver`/`--rank-bronze`
+tokens for the podium. `tailwind.config.ts` maps every token to a
+Tailwind class (`bg-bg-page`, `text-accent`, `font-display`, ...), so
+components use Tailwind utilities and never hardcode a hex color —
+theming is a `data-theme` attribute flip, not a component-level
+concern.
+
+- `src/context/ThemeContext.tsx` — `dark`/`light` state. Defaults to
+  the user's last choice (`localStorage`), falling back to the OS
+  `prefers-color-scheme` on first visit ever, and to `dark` if neither
+  is available. Writes `data-theme` onto `<html>`; `index.html` also
+  ships with `data-theme="dark"` statically so there's no
+  flash-of-wrong-theme before React mounts.
+- `src/components/common/ThemeToggle.tsx` — sun/moon switch
+  (`lucide-react`) wired to `useTheme()`.
+- `src/context/AuthContext.tsx` — login/logout + `token`/`userId`/
+  `username`/`role`, synced to `localStorage` under the `panteon.*`
+  keys. The `DevPanel` (see below) drives this.
+- `src/api/client.ts` — a `ky` instance (`baseUrl` from
+  `VITE_API_URL`) whose `beforeRequest` hook attaches the stored JWT as
+  a `Bearer` `Authorization` header.
+
+## Pages & routing (`src/router.tsx`)
+
+- `/` — `LeaderboardPage`: topbar (week id + countdown + theme toggle),
+  `MyRankCard`, the always-on `DevPanel`, `PrizePoolBanner`, the Top 100
+  podium + list, and — only for a logged-in user outside the Top 100 —
+  a "· · ·" separator followed by their ±3/±2 rank window.
+- `/history` — `HistoryPage`: `WeeklyHistoryPanel` (requires login) plus
+  the `DevPanel` for convenience.
+
+There's no registration flow and no dedicated login page: the
+`DevPanel` (visible on every page) is how you authenticate — pick one
+of the seeded well-known usernames (`admin`, `demo_top_player`,
+`demo_regular_player`) from its dropdown and click "Giriş yap". It also
+has "Kazanç Simüle Et" (one random `/earnings/earn` call) and "Hızlı
+Simülasyon" (the same call every 3s while toggled on) so the live
+`refetchInterval`-driven leaderboard can be demoed without touching the
+API directly.
+
+## Data layer (`src/api/`, `src/hooks/`, `src/types/api.ts`)
+
+`src/types/api.ts` mirrors the server's response shapes field-for-field
+(see the server's "API endpoint reference" table above). `src/api/*.ts`
+are thin `ky`-based wrappers, one file per server module
+(`leaderboard.api.ts`, `weeks.api.ts`, `history.api.ts`, `auth.api.ts`).
+`src/hooks/` wraps those in TanStack Query: `useLeaderboardTop` and
+`useMyRank` poll every 5s (`refetchInterval`) so the leaderboard updates
+live as `DevPanel` earn calls land; `useMyRank` and `useWeeklyHistory`
+are `enabled: Boolean(user)`-gated since their endpoints require auth;
+`useCountdown` is a plain `setInterval`-driven hook (no query
+involved) used by the `Countdown` component.
+
+## Leaderboard components (`src/components/leaderboard/`)
+
+- `RankBadge` — a plain rank number, except ranks 1-3 which get a
+  bordered badge colored with the theme-independent
+  `--rank-gold`/`--rank-silver`/`--rank-bronze` tokens.
+- `LeaderboardRow` — one row (avatar, username, `tabular-nums`
+  earnings), shared verbatim between the Top 100 list and the ±3/±2
+  rank window; an `isCurrentUser` prop drives the `--me-bg`
+  highlight + "(sen)" suffix.
+- `Podium` — three-column layout for ranks 1-3, rank #1 centered and
+  taller via CSS `order`, bordered in the same rank-color tokens.
+- `LeaderboardList` — renders `Podium` + the rest of the Top 100 with a
+  plain `.map()`. **No virtualization library is used** — see "Notes"
+  below for why.
+
+## Notes
+
+- No `@tanstack/react-virtual` (or any list-virtualization library) is
+  used anywhere in `client/`. The Top 100 list is a fixed 100 rows and
+  the out-of-top100 rank window is ~6 rows — well below the size where
+  virtualizing pays for itself, and it would add a dependency and
+  scroll-position bookkeeping for no measurable benefit. The case's
+  original "page freezes on scroll" symptom is a backend concern (N+1
+  queries against the leaderboard), already solved by this project's
+  single batched Postgres/Redis query per request (see "Leaderboard
+  module" above) plus TanStack Query's cache and `refetchInterval` —
+  not something a frontend virtualization library would have fixed.
+- `Avatar`'s color is derived from a hash of the username, interpolated
+  between `--accent` and `--accent-gold` via CSS `color-mix()` — no
+  hardcoded avatar palette, so it stays theme-correct automatically.
+- `client/tests/` uses Vitest + `@testing-library/react` (`npm run
+  test`), covering `LeaderboardRow` (top100 vs. rank-window variants)
+  and `MyRankCard` (logged-out / in-top100 / out-of-top100 states).
+- Tailwind 4 is configured in "compat" mode (`postcss.config.js` +
+  `@config` in `src/styles/globals.css`) specifically so the color/font
+  tokens can live in a plain `tailwind.config.ts` `theme.extend` block
+  rather than Tailwind 4's native CSS-first `@theme` syntax — this
+  keeps the mapping from CSS variable to Tailwind class name in one
+  obvious place.
+- `ky` 2.x (installed by `npm install ky`) has a different API from the
+  1.x docs commonly found online: `baseUrl` instead of `prefixUrl`, and
+  `beforeRequest` hooks receive a `{ request, options, retryCount }`
+  state object instead of the bare `Request`.

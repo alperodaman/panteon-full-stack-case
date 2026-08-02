@@ -1,0 +1,32 @@
+:root {
+  --bg-page: #12141C;
+  --bg-surface: #1C2030;
+  --bg-surface-alt: #191C28;
+  --accent: #E8622C;
+  --accent-gold: #F2C14E;
+  --text-primary: #EDEEF2;
+  --text-secondary: #8A8FA3;
+  --border: #2A2F42;
+  --me-bg: #241A14;
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --radius-card: 12px;
+  --radius-row: 8px;
+
+  /* Podium rank colors — theme-independent, stay constant in dark/light */
+  --rank-gold: #F2C14E;
+  --rank-silver: #C7CBD6;
+  --rank-bronze: #C97B4A;
+}
+
+[data-theme="light"] {
+  --bg-page: #FAF9F6;
+  --bg-surface: #FFFFFF;
+  --bg-surface-alt: #FFFFFF;
+  --accent: #D64541;
+  --accent-gold: #C98F1C;
+  --text-primary: #1A1D29;
+  --text-secondary: #706E64;
+  --border: #E5E3DD;
+  --me-bg: #FBEAE8;
+}

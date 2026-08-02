@@ -1,0 +1,12 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+@config "../../tailwind.config.ts";
+
+body {
+  @apply bg-bg-page text-text-primary font-body;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

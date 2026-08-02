@@ -376,6 +376,61 @@ It will be updated at every step.
   called separately for the still-active week and for a just-force-reset
   finalized week, showing `"in_progress"`/`"finalized"` come back correctly
   in each case.
+- **Client infra & design system:** Full stack specified up front: React +
+  TypeScript + Vite, Tailwind CSS, TanStack Query, react-router, ky.
+  `client/` is a fully independent project (own `package.json`,
+  `node_modules`, `tsconfig.json`) with no monorepo tooling, matching the
+  `server`/`client` separation decided in the repo-skeleton step.
+- **Client infra & design system:** The full `tokens.css` contents (dark
+  palette in `:root`, light palette under `[data-theme="light"]`, exact
+  hex values, font-family/radius variable names) were specified verbatim
+  and used as-is.
+- **Client infra & design system:** `ThemeContext` behavior specified
+  exactly: check `window.matchMedia('(prefers-color-scheme: dark)')` on
+  first load, persist the user's explicit choice to `localStorage`
+  afterward, default theme is `dark`.
+- **Client infra & design system:** This step is infra/design-system only
+  — real components (`LeaderboardRow`, `Podium`, etc.) are deferred to a
+  later step ("Adım 8B"); this step's `DesignSystemPreview` page is
+  explicitly temporary and will be deleted then.
+- **Client infra & design system:** Icon library choice was delegated to
+  the AI with instructions not to ask ("lucide-react kullan, sorma" —
+  use lucide-react, don't ask).
+- **Leaderboard UI ("Adım 8B"):** Explicit, non-negotiable decision to
+  NOT use `@tanstack/react-virtual` (or any list-virtualization
+  library) for the Top 100 list. Reasoning given: the Top 100 list is
+  fixed at 100 rows and the out-of-top100 rank window is only ~6 rows —
+  far below the size where virtualization pays for itself. The case's
+  original "page freezes on scroll" complaint was diagnosed as almost
+  certainly caused by the old system's backend N+1 queries, not
+  frontend rendering cost, and that class of problem is already solved
+  architecturally by Adım 3's single batched Postgres/Redis query per
+  request plus TanStack Query's cache + `refetchInterval`. Adding a
+  virtualization dependency here would be complexity with no measurable
+  benefit at this scale. `LeaderboardList` renders with a plain `.map()`.
+- **Leaderboard UI ("Adım 8B"):** Full binding UX/layout spec given for
+  the leaderboard page: a slim topbar (week number + countdown +
+  `ThemeToggle`); a `MyRankCard` fixed at the top, accent-colored,
+  showing rank + weekly earnings, always visible on load; a three-column
+  `Podium` for the top 3 with rank #1 centered and taller, borders using
+  the theme-independent `--rank-gold`/`--rank-silver`/`--rank-bronze`
+  tokens from Adım 8A (not a plain list row); a Top 100 list with
+  right-aligned `tabular-nums` earnings; for users outside the Top 100,
+  a "· · ·" separator followed by the ±3/±2 rank window with an
+  accent-colored, `--me-bg`-highlighted "sen" (self) row; and a
+  responsive split where `MyRankCard` is a sticky top bar on mobile and
+  a static block in a narrow centered column on desktop. Implemented
+  verbatim — see `LeaderboardPage.tsx`, `Podium.tsx`, `MyRankCard.tsx`.
+- **Leaderboard UI ("Adım 8B"):** DevPanel scope specified exactly: an
+  always-visible dev-only panel with an "earn simulate" button (random
+  `amountInCents` posted to `/earnings/earn`), a "quick simulation"
+  toggle that auto-earns every 3 seconds while on, and a login form —
+  no registration, since the server has no register endpoint — offering
+  the seeded well-known test usernames (`admin`, `demo_top_player`,
+  `demo_regular_player`) as quick-select options for convenience.
+- **Leaderboard UI ("Adım 8B"):** Explicit instruction to delete the
+  Adım 8A `DesignSystemPreview` temporary page and its route once real
+  pages exist.
 
 
 ## Decisions made / boilerplate produced by the AI
@@ -721,6 +776,108 @@ It will be updated at every step.
   checked against a spoofed-2099 clock; a token minted while time-travelled
   to 2099 remains trivially valid once later assertions revert to the real
   clock (real-now is always earlier than a fake-future exp).
+- **Client infra & design system:** `npm create vite@latest client --
+  --template react-ts` (default create-vite install picked up Tailwind
+  v4.3.3 and ky v2.0.2, both newer major versions than the docs commonly
+  found online — see the two adaptations below).
+- **Client infra & design system:** Tailwind v4 defaults to CSS-first
+  `@theme` configuration and has no `init` CLI command. Since the ask was
+  specifically for a `tailwind.config.ts` with a `theme.extend` block
+  mapping to the CSS variables, used Tailwind v4's backward-compat path
+  instead: `@tailwindcss/postcss` in `postcss.config.js` plus
+  `@config "../../tailwind.config.ts";` in `src/styles/globals.css`
+  (placed after the `@import` statements — CSS requires `@import` to
+  precede all other statements, which `vite build` flagged as a warning
+  until reordered).
+- **Client infra & design system:** ky v2.0.2's API differs from ky 1.x:
+  the base-URL option is `baseUrl`, not `prefixUrl` (`prefixUrl` now
+  throws a TS error suggesting the unrelated `prefix` option — a
+  path-joining prefix rather than an origin), and the `beforeRequest`
+  hook receives a `{ request, options, retryCount }` state object rather
+  than the bare `Request`, so the interceptor destructures `request` from
+  that object before setting the `Authorization` header. Both were only
+  caught by `tsc`/`vite build` failing, not by any deprecation warning.
+- **Client infra & design system:** `getInitialTheme()` in
+  `ThemeContext.tsx`: a stored `localStorage` preference always wins;
+  otherwise falls back to `window.matchMedia('(prefers-color-scheme:
+  dark)')`; if that API is unavailable, falls back to `'dark'`.
+  `index.html` also ships `data-theme="dark"` as a static attribute so
+  there's no flash-of-wrong-theme before React mounts and runs this
+  check — reconciles the spec's "check matchMedia on first load" with
+  its separately-stated "default theme is dark" by treating the latter
+  as the pre-hydration/no-API-available fallback, not an override of an
+  explicit system light preference.
+- **Client infra & design system:** Deleted create-vite's default
+  boilerplate wholesale (`App.css`, `index.css`, the counter demo in
+  `App.tsx`, `src/assets/{react,vite}.svg`, `hero.png`,
+  `public/icons.svg`) rather than leaving it alongside the new design
+  system, since none of it matches the token-driven styling approach and
+  it would just be dead weight before Adım 8B replaces `App.tsx` anyway.
+  Replaced `client/README.md` (the generic create-vite template readme)
+  with a one-line pointer to the root `README.md`, which now has the
+  full client section instead.
+- **Client infra & design system:** Added `src/vite-env.d.ts` typing
+  `import.meta.env.VITE_API_URL` (create-vite's react-ts template didn't
+  generate one) and a `client/.env.example` with that variable, matching
+  the `server/.env.example` convention already in the repo.
+- **Client infra & design system:** `AuthContext`'s stored fields
+  (`token`/`userId`/`username`/`role`) and the `role: "USER" | "ADMIN"`
+  union match `server/src/modules/auth/auth.service.ts`'s `LoginResult`
+  type exactly, so the not-yet-built DevPanel login form (Adım 8B) can
+  pass the server's `/auth/login` response straight into `login()`
+  without any field mapping.
+- **Leaderboard UI ("Adım 8B"):** `client/src/types/api.ts` mirrors the
+  server's response shapes field-for-field (`TopLeaderboardEntry`,
+  `MyLeaderboardEntry` with `isCurrentUser`, `MyPositionResponse` with
+  `inTop100`/`myRank`, `WeekResultsResponse` with the `"in_progress" |
+  "finalized"` `status` union, `UserHistoryEntry` with a nullable
+  `rank`) instead of re-deriving looser types, so the API layer is a
+  thin, statically-checked pass-through with zero runtime mapping.
+- **Leaderboard UI ("Adım 8B"):** One shared `LeaderboardRow` component
+  is used in both the Top 100 context (`TopLeaderboardEntry`, no
+  `isCurrentUser` field from the server) and the rank-window context
+  (`MyLeaderboardEntry`, server-provided `isCurrentUser`) rather than
+  two near-duplicate row components — the component takes an optional
+  `isCurrentUser` prop (defaulting to `false`) so the Top 100 list can
+  also compute the highlight locally by comparing `entry.username` to
+  the logged-in user's username, while the rank-window list simply
+  forwards the server's own flag.
+- **Leaderboard UI ("Adım 8B"):** `Avatar` derives its background color
+  from a hash of the username interpolated between `--accent` and
+  `--accent-gold` via CSS `color-mix()`, rather than a hardcoded avatar
+  palette — keeps every avatar color theme-aware for free (it recomputes
+  from the same two tokens in light/dark) with no separate color table
+  to maintain.
+- **Leaderboard UI ("Adım 8B"):** `useLeaderboardTop` and `useMyRank`
+  both poll every 5 seconds via TanStack Query's `refetchInterval`, as
+  instructed; `useMyRank` is additionally gated with `enabled:
+  Boolean(user)` since `/leaderboard/me` requires auth and there's no
+  reason to fire it (or poll it) while logged out.
+- **Leaderboard UI ("Adım 8B"):** `JumpToMyRankButton` and the
+  `LeaderboardList` row refs use a plain `Map<number, HTMLDivElement>`
+  ref (rank → row DOM node) rather than a virtualization library's
+  built-in scroll-to-index, consistent with the no-virtualization
+  decision above — `scrollIntoView({ behavior: 'smooth', block:
+  'center' })` is sufficient at this list size.
+- **Leaderboard UI ("Adım 8B"):** Money formatting (`lib/format.ts`)
+  explicitly pins `toLocaleString('en-US', …)` rather than passing
+  `undefined` for the locale. Discovered while writing
+  `LeaderboardRow.test.tsx`/`MyRankCard.test.tsx`: `undefined` resolves
+  to the host OS locale, which on the development machine produced
+  `1.234,50` (period/comma swapped) instead of `1,234.50` — since every
+  amount in the UI is prefixed with a literal `$`, the format must be
+  locale-independent to stay consistent with that symbol.
+- **Leaderboard UI ("Adım 8B"):** Test tooling was added from scratch —
+  the client had no `vitest`/`@testing-library/*`/`jsdom` before this
+  step. Added a `tsconfig.test.json` (included from the root
+  `tsconfig.json`'s `references`, covering `tests/` + `src/`) rather
+  than loosening `tsconfig.app.json`'s scope, so production and test
+  TypeScript configs stay independently scoped the way `tsconfig.node.json`
+  already does for Vite's own config. `tests/setup.ts` imports
+  `@testing-library/jest-dom/vitest` and calls `cleanup()` in a global
+  `afterEach` (RTL's auto-cleanup isn't wired up automatically without
+  Vitest's `globals: true`, which this repo intentionally avoids so
+  `describe`/`it`/`expect` stay explicit imports).
 
 ## Verification
 
@@ -890,3 +1047,63 @@ It will be updated at every step.
   demo state) to leave the environment clean for review, per the same
   convention used after every prior manual-verification step that touches
   real data.
+- **Client infra & design system:** `npm run build` (`tsc -b && vite
+  build`) clean, zero TypeScript errors, zero CSS/PostCSS warnings.
+  Confirmed no hardcoded hex colors leak into component-facing Tailwind
+  output by grepping the built CSS: `.bg-bg-page{background-color:var(--bg-page)}`,
+  `.bg-rank-gold{background-color:var(--rank-gold)}`, etc. — every
+  color utility resolves to a `var(--...)`, never a literal hex.
+- **Client infra & design system:** `npm run dev`, driven headlessly with
+  Playwright (`chromium-cli` wasn't installed in this environment, so
+  used `npx playwright` directly) against `http://localhost:5173`:
+  screenshotted the Design System Preview page, confirmed
+  `getComputedStyle` on the `<h1>` reports `"Space Grotesk", sans-serif`
+  (Google Fonts loaded correctly), confirmed the page renders in
+  `light` theme initially (this sandboxed Chromium's OS-level
+  `prefers-color-scheme` defaults to light, correctly exercising the
+  `matchMedia` branch of `getInitialTheme()`), clicked the `ThemeToggle`
+  button, and confirmed `<html data-theme>` flips to `dark` with the
+  body background changing from `rgb(250, 249, 246)` (`--bg-page` light)
+  to `rgb(18, 20, 28)` (`--bg-page` dark) — all through the CSS
+  variable/`data-theme` mechanism, no component-level color logic.
+  `console --errors` equivalent (a `pageerror`/console-error listener)
+  reported zero errors in either theme.
+- **Leaderboard UI ("Adım 8B"):** `npx vitest run` → 5/5 passing
+  (`LeaderboardRow.test.tsx`: plain top100 row has no highlight/`(sen)`
+  suffix, rank-window row with `isCurrentUser` gets the `bg-me-bg`
+  highlight and `(sen)` suffix; `MyRankCard.test.tsx`: renders nothing
+  when logged out, shows `#1`/"Sıralaman" when `inTop100`, shows
+  "Top 100 dışında" when not — the latter two mock
+  `leaderboard.api.getMyPosition` and seed `AuthProvider`'s
+  `localStorage`-backed initial state directly rather than driving a
+  real login network call). `npx tsc -b` (now covering
+  `tsconfig.test.json` too) and `npm run build` (`tsc -b && vite build`)
+  both clean, zero errors. `npm run lint` (`oxlint`) reports only the
+  two pre-existing `react/only-export-components` warnings from Adım
+  8A's `ThemeContext.tsx`/`AuthContext.tsx` — no new warnings from any
+  file added in this step. Confirmed `@tanstack/react-virtual` is absent
+  from `client/package.json`.
+- **Leaderboard UI ("Adım 8B"):** Full manual walkthrough with both
+  `docker compose` services and `server` (`npm run dev`) already up
+  against the Adım 4 seed data (current week `2026-W31`): started
+  `client`'s `npm run dev` and drove it headlessly with `npx playwright`
+  (no `chromium-cli` in this environment, same fallback as Adım 8A).
+  Logged in via the DevPanel as `demo_top_player` → `MyRankCard` showed
+  `#1` / "Sıralaman" and the Top 100 podium correctly rendered them at
+  the center gold slot. Clicked "Kazanç Simüle Et" and, after waiting
+  6s for the 5s `refetchInterval` to fire, confirmed `MyRankCard`'s
+  earnings figure increased (`$50,982.06` → `$51,461.71`) with no
+  manual refresh. Logged out and back in as `demo_regular_player`
+  (seeded outside the top 100 by design) → `MyRankCard` showed
+  "Top 100 dışında" / `#5001`, and the page rendered the "· · ·"
+  separator followed by the ±3/±2 rank window with the `(sen)` row
+  visibly highlighted in `--me-bg`/accent. Toggled dark ↔ light theme on
+  both the leaderboard and history pages — every surface (podium
+  borders, DevPanel, rank-window highlight) repainted correctly with no
+  hardcoded colors breaking. Resized the viewport to 375px and
+  confirmed `MyRankCard` renders as a sticky top element above the
+  scrolling list (`sticky top-0` below `sm:`, `static` at `sm:` and up).
+  Zero console/page errors across the entire walkthrough. Stopped both
+  dev servers afterward; no seeded data was left in a mutated state
+  beyond the same `demo_top_player` earnings bump already covered by
+  the server's own re-seed convention.
