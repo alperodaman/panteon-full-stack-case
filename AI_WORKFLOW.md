@@ -158,7 +158,7 @@ It will be updated at every step.
   routes into `server/src/server.ts`.
 - **Leaderboard module:** `GET /leaderboard/me` should sit behind a
   placeholder middleware that expects `req.userId` to already be set,
-  since real JWT auth is a later step (step 4) — explicitly scoped as
+  since real JWT auth is added in a later step (the Auth + seed step) — explicitly scoped as
   "wire the real thing later," not an oversight.
 - **Leaderboard module:** Test file path and scenarios were specified
   exactly: `server/tests/leaderboard.service.test.ts`, using Vitest
@@ -173,7 +173,7 @@ It will be updated at every step.
   outside-top-100 user; `npm run test tests/leaderboard.service.test.ts`
   must pass.
 - **Auth + seed:** Full scope for this step was specified up front: real
-  JWT auth (replacing the step-3 placeholder) plus a seed script, since the
+  JWT auth (replacing the Leaderboard module step's placeholder) plus a seed script, since the
   case has no real client/game producing data and the system needs to be
   testable end-to-end.
 - **Auth:** `login(username)` exact contract specified: no registration
@@ -183,7 +183,7 @@ It will be updated at every step.
 - **Auth:** `requireAuth`/`requireAdmin` contract specified: `requireAuth`
   verifies `Authorization: Bearer <token>`, sets `req.userId`/`req.userRole`,
   401s otherwise; `requireAdmin` layers a role check on top, 403 if not
-  `ADMIN`. Explicit instruction to replace the step-3 placeholder
+  `ADMIN`. Explicit instruction to replace the Leaderboard module step's placeholder
   middleware with this real one, not run them side by side.
 - **Auth:** Route specified exactly: `POST /auth/login`, zod-validated
   `{ username }` body.
@@ -200,7 +200,7 @@ It will be updated at every step.
   count.
 - **Seed script:** Full strategy specified in complete detail up front
   (all of it treated as settled, not open for redesign):
-  - Library: `@faker-js/faker` (already a dependency from step 1).
+  - Library: `@faker-js/faker` (already a dependency from the Repo skeleton step).
   - Exactly 10,000 fake users — explicitly stated to be a demo-richness
     choice, not a scalability test, since the Redis ZSET architecture's
     algorithmic guarantees (O(log N) rank/insert/range) don't depend on N;
@@ -285,7 +285,7 @@ It will be updated at every step.
   exact flow to implement, not a sketch to reinterpret:
   `getOrCreateResetJob` → if already `completed`, return; if `pending`, run
   cutover and mark `distributing`; then always read the archived
-  leaderboard, run step 5's `calculatePrizeDistribution` over it, write the
+  leaderboard, run the Prize distribution step's `calculatePrizeDistribution` over it, write the
   Postgres transaction, write the Mongo snapshot, mark `completed`.
 - **Weekly reset job:** File/module scope specified exactly:
   `server/src/modules/weeks/weeklyResetJob.repository.ts` (`getOrCreateResetJob`,
@@ -294,7 +294,7 @@ It will be updated at every step.
   (`resetWeek` applying the pseudocode verbatim; `readArchiveLeaderboard`
   returning `[]` on an empty/never-earned week rather than erroring;
   `writePostgresTransaction` using one Prisma `$transaction` for
-  `WeeklyResult` + `PrizeDistribution`, feeding step 5's
+  `WeeklyResult` + `PrizeDistribution`, feeding the Prize distribution step's
   `calculatePrizeDistribution` with the archived data; `writeMongoSnapshot`
   against `server/src/db/mongo/models/weeklySnapshot.model.ts`, explicitly
   required to be best-effort — a Mongo failure must not block the main flow,
@@ -307,7 +307,7 @@ It will be updated at every step.
   separate entry point `server/src/worker.ts` with its own `npm run worker`
   script — explicitly called out as needing to be a separate process from
   the API server, per the stateless-architecture decision already made in
-  step 1.
+  the Repo skeleton step.
 - **Weekly reset job:** Admin demo endpoint specified exactly:
   `POST /admin/weeks/:weekId/force-reset`, behind `requireAdmin`, calling
   the *same* `resetWeek()` function the worker's cron job calls (not a
@@ -317,7 +317,7 @@ It will be updated at every step.
 - **Weekly reset job:** Test file and scenarios specified exactly:
   `server/tests/weeklyReset.test.ts`, calling `resetWeek` against a seeded
   Redis leaderboard, verifying the resulting Postgres rows, cross-checking
-  the prize amounts against step 5's normalized formula (not hand-computed
+  the prize amounts against the Prize distribution step's normalized formula (not hand-computed
   numbers), and calling `resetWeek` a second time with the same `weekId` to
   prove idempotency.
 - **Weekly reset job:** Verification requirements specified exactly:
@@ -335,7 +335,7 @@ It will be updated at every step.
   `resetWeek()` at cutover, so the currently in-progress week has no row
   there. Branch explicitly on whether the requested `weekId` equals the
   active week (`config:currentWeekId`): if so, read the live top 100
-  straight from Redis via step 3's `getTopLeaderboard()` and mark
+  straight from Redis via the Leaderboard module step's `getTopLeaderboard()` and mark
   `"status": "in_progress"`; if it's a past/finalized week, read Postgres
   `WeeklyResult` and mark `"status": "finalized"`. Both branches must
   return the *same* response shape (the same `entries` object list as `GET
@@ -389,14 +389,14 @@ It will be updated at every step.
   exactly: check `window.matchMedia('(prefers-color-scheme: dark)')` on
   first load, persist the user's explicit choice to `localStorage`
   afterward, default theme is `dark`.
-- **Client infra & design system:** This step is infra/design-system only
+  - **Client infra & design system:** This step is infra/design-system only
   — real components (`LeaderboardRow`, `Podium`, etc.) are deferred to a
-  later step ("Adım 8B"); this step's `DesignSystemPreview` page is
+  later step (Leaderboard UI); this step's `DesignSystemPreview` page is
   explicitly temporary and will be deleted then.
 - **Client infra & design system:** Icon library choice was delegated to
   the AI with instructions not to ask ("lucide-react kullan, sorma" —
   use lucide-react, don't ask).
-- **Leaderboard UI ("Adım 8B"):** Explicit, non-negotiable decision to
+- **Leaderboard UI:** Explicit, non-negotiable decision to
   NOT use `@tanstack/react-virtual` (or any list-virtualization
   library) for the Top 100 list. Reasoning given: the Top 100 list is
   fixed at 100 rows and the out-of-top100 rank window is only ~6 rows —
@@ -404,34 +404,34 @@ It will be updated at every step.
   original "page freezes on scroll" complaint was diagnosed as almost
   certainly caused by the old system's backend N+1 queries, not
   frontend rendering cost, and that class of problem is already solved
-  architecturally by Adım 3's single batched Postgres/Redis query per
+  architecturally by the Leaderboard module step's single batched Postgres/Redis query per
   request plus TanStack Query's cache + `refetchInterval`. Adding a
   virtualization dependency here would be complexity with no measurable
   benefit at this scale. `LeaderboardList` renders with a plain `.map()`.
-- **Leaderboard UI ("Adım 8B"):** Full binding UX/layout spec given for
+- **Leaderboard UI** Full binding UX/layout spec given for
   the leaderboard page: a slim topbar (week number + countdown +
   `ThemeToggle`); a `MyRankCard` fixed at the top, accent-colored,
   showing rank + weekly earnings, always visible on load; a three-column
   `Podium` for the top 3 with rank #1 centered and taller, borders using
   the theme-independent `--rank-gold`/`--rank-silver`/`--rank-bronze`
-  tokens from Adım 8A (not a plain list row); a Top 100 list with
+  tokens from the Client infra & design system step (not a plain list row); a Top 100 list with
   right-aligned `tabular-nums` earnings; for users outside the Top 100,
   a "· · ·" separator followed by the ±3/±2 rank window with an
   accent-colored, `--me-bg`-highlighted "sen" (self) row; and a
   responsive split where `MyRankCard` is a sticky top bar on mobile and
   a static block in a narrow centered column on desktop. Implemented
   verbatim — see `LeaderboardPage.tsx`, `Podium.tsx`, `MyRankCard.tsx`.
-- **Leaderboard UI ("Adım 8B"):** DevPanel scope specified exactly: an
+- **Leaderboard UI:** DevPanel scope specified exactly: an
   always-visible dev-only panel with an "earn simulate" button (random
   `amountInCents` posted to `/earnings/earn`), a "quick simulation"
   toggle that auto-earns every 3 seconds while on, and a login form —
   no registration, since the server has no register endpoint — offering
   the seeded well-known test usernames (`admin`, `demo_top_player`,
   `demo_regular_player`) as quick-select options for convenience.
-- **Leaderboard UI ("Adım 8B"):** Explicit instruction to delete the
-  Adım 8A `DesignSystemPreview` temporary page and its route once real
+- **Leaderboard UI:** Explicit instruction to delete the
+  Client infra & design system step's `DesignSystemPreview` temporary page and its route once real
   pages exist.
-- **Leaderboard UI polish (post-Adım 8 bug fixes):** User identified
+- **Leaderboard UI polish (post-implementation bug fixes):** User identified
   three concrete bugs and specified the exact fix for each, down to
   implementation steps: (1) Top 100 list must scroll within its own
   fixed-height container (~480px desktop / ~360px mobile, thin custom
@@ -552,7 +552,7 @@ It will be updated at every step.
 - **Leaderboard module:** `src/middleware/placeholderAuth.ts` reads
   `x-user-id` and 401s if absent, augmenting `Express.Request` with an
   optional `userId`. Meant to be swapped for real JWT verification in
-  step 4 without touching the routes/controllers that depend on
+  the Auth + seed step without touching the routes/controllers that depend on
   `req.userId`.
 - **Leaderboard module:** `src/db/mongo/models/earningEvent.model.ts`:
   Mongoose TTL index via `{ expires: 60 * 60 * 24 * 90 }` on the
@@ -647,7 +647,7 @@ It will be updated at every step.
   is floating-point noise, not a logic bug, before relaxing the assertion.
 - **Weekly reset job:** `readArchiveLeaderboard` needs earnings per player,
   but `weekCutover.lua` deletes `earnings:week:{weekId}` as part of cutover
-  (by design, from step 2-3) before this function ever runs — so raw
+  (by design, from the Redis Lua scripts and Leaderboard module steps) before this function ever runs — so raw
   earnings can't be read back from a hash lookup post-cutover. Instead,
   earnings are decoded directly from the archived ZSET's compound score
   (`earningsInCents * 20000 + (20000 - minutesSinceWeekStart)`, from
@@ -827,7 +827,7 @@ It will be updated at every step.
   `App.tsx`, `src/assets/{react,vite}.svg`, `hero.png`,
   `public/icons.svg`) rather than leaving it alongside the new design
   system, since none of it matches the token-driven styling approach and
-  it would just be dead weight before Adım 8B replaces `App.tsx` anyway.
+  it would just be dead weight before the Leaderboard UI step replaces `App.tsx` anyway.
   Replaced `client/README.md` (the generic create-vite template readme)
   with a one-line pointer to the root `README.md`, which now has the
   full client section instead.
@@ -838,17 +838,17 @@ It will be updated at every step.
 - **Client infra & design system:** `AuthContext`'s stored fields
   (`token`/`userId`/`username`/`role`) and the `role: "USER" | "ADMIN"`
   union match `server/src/modules/auth/auth.service.ts`'s `LoginResult`
-  type exactly, so the not-yet-built DevPanel login form (Adım 8B) can
+  type exactly, so the not-yet-built DevPanel login form (the Leaderboard UI step) can
   pass the server's `/auth/login` response straight into `login()`
   without any field mapping.
-- **Leaderboard UI ("Adım 8B"):** `client/src/types/api.ts` mirrors the
+- **Leaderboard UI:** `client/src/types/api.ts` mirrors the
   server's response shapes field-for-field (`TopLeaderboardEntry`,
   `MyLeaderboardEntry` with `isCurrentUser`, `MyPositionResponse` with
   `inTop100`/`myRank`, `WeekResultsResponse` with the `"in_progress" |
   "finalized"` `status` union, `UserHistoryEntry` with a nullable
   `rank`) instead of re-deriving looser types, so the API layer is a
   thin, statically-checked pass-through with zero runtime mapping.
-- **Leaderboard UI ("Adım 8B"):** One shared `LeaderboardRow` component
+- **Leaderboard UI:** One shared `LeaderboardRow` component
   is used in both the Top 100 context (`TopLeaderboardEntry`, no
   `isCurrentUser` field from the server) and the rank-window context
   (`MyLeaderboardEntry`, server-provided `isCurrentUser`) rather than
@@ -857,24 +857,24 @@ It will be updated at every step.
   also compute the highlight locally by comparing `entry.username` to
   the logged-in user's username, while the rank-window list simply
   forwards the server's own flag.
-- **Leaderboard UI ("Adım 8B"):** `Avatar` derives its background color
+- **Leaderboard UI:** `Avatar` derives its background color
   from a hash of the username interpolated between `--accent` and
   `--accent-gold` via CSS `color-mix()`, rather than a hardcoded avatar
   palette — keeps every avatar color theme-aware for free (it recomputes
   from the same two tokens in light/dark) with no separate color table
   to maintain.
-- **Leaderboard UI ("Adım 8B"):** `useLeaderboardTop` and `useMyRank`
+- **Leaderboard UI:** `useLeaderboardTop` and `useMyRank`
   both poll every 5 seconds via TanStack Query's `refetchInterval`, as
   instructed; `useMyRank` is additionally gated with `enabled:
   Boolean(user)` since `/leaderboard/me` requires auth and there's no
   reason to fire it (or poll it) while logged out.
-- **Leaderboard UI ("Adım 8B"):** `JumpToMyRankButton` and the
+- **Leaderboard UI:** `JumpToMyRankButton` and the
   `LeaderboardList` row refs use a plain `Map<number, HTMLDivElement>`
   ref (rank → row DOM node) rather than a virtualization library's
   built-in scroll-to-index, consistent with the no-virtualization
   decision above — `scrollIntoView({ behavior: 'smooth', block:
   'center' })` is sufficient at this list size.
-- **Leaderboard UI ("Adım 8B"):** Money formatting (`lib/format.ts`)
+- **Leaderboard UI:** Money formatting (`lib/format.ts`)
   explicitly pins `toLocaleString('en-US', …)` rather than passing
   `undefined` for the locale. Discovered while writing
   `LeaderboardRow.test.tsx`/`MyRankCard.test.tsx`: `undefined` resolves
@@ -882,7 +882,7 @@ It will be updated at every step.
   `1.234,50` (period/comma swapped) instead of `1,234.50` — since every
   amount in the UI is prefixed with a literal `$`, the format must be
   locale-independent to stay consistent with that symbol.
-- **Leaderboard UI ("Adım 8B"):** Test tooling was added from scratch —
+- **Leaderboard UI:** Test tooling was added from scratch —
   the client had no `vitest`/`@testing-library/*`/`jsdom` before this
   step. Added a `tsconfig.test.json` (included from the root
   `tsconfig.json`'s `references`, covering `tests/` + `src/`) rather
@@ -893,7 +893,7 @@ It will be updated at every step.
   `afterEach` (RTL's auto-cleanup isn't wired up automatically without
   Vitest's `globals: true`, which this repo intentionally avoids so
   `describe`/`it`/`expect` stay explicit imports).
-- **Leaderboard UI polish (post-Adım 8 bug fixes):** Root cause of the
+- **Leaderboard UI polish (post-implementation bug fixes):** Root cause of the
   podium size-hierarchy bug: the original per-rank styles used `pt-*`
   (padding-top) to fake height differences under `items-end`
   alignment, but more top padding makes a box *taller*, not shorter —
@@ -1099,7 +1099,7 @@ It will be updated at every step.
   variable/`data-theme` mechanism, no component-level color logic.
   `console --errors` equivalent (a `pageerror`/console-error listener)
   reported zero errors in either theme.
-- **Leaderboard UI ("Adım 8B"):** `npx vitest run` → 5/5 passing
+- **Leaderboard UI:** `npx vitest run` → 5/5 passing
   (`LeaderboardRow.test.tsx`: plain top100 row has no highlight/`(sen)`
   suffix, rank-window row with `isCurrentUser` gets the `bg-me-bg`
   highlight and `(sen)` suffix; `MyRankCard.test.tsx`: renders nothing
@@ -1110,15 +1110,15 @@ It will be updated at every step.
   real login network call). `npx tsc -b` (now covering
   `tsconfig.test.json` too) and `npm run build` (`tsc -b && vite build`)
   both clean, zero errors. `npm run lint` (`oxlint`) reports only the
-  two pre-existing `react/only-export-components` warnings from Adım
-  8A's `ThemeContext.tsx`/`AuthContext.tsx` — no new warnings from any
+  two pre-existing `react/only-export-components` warnings from the
+  Client infra & design system step's `ThemeContext.tsx`/`AuthContext.tsx` — no new warnings from any
   file added in this step. Confirmed `@tanstack/react-virtual` is absent
   from `client/package.json`.
-- **Leaderboard UI ("Adım 8B"):** Full manual walkthrough with both
+- **Leaderboard UI:** Full manual walkthrough with both
   `docker compose` services and `server` (`npm run dev`) already up
-  against the Adım 4 seed data (current week `2026-W31`): started
+  against the Auth + seed step's seed data (current week `2026-W31`): started
   `client`'s `npm run dev` and drove it headlessly with `npx playwright`
-  (no `chromium-cli` in this environment, same fallback as Adım 8A).
+  (no `chromium-cli` in this environment, same fallback as the Client infra & design system step).
   Logged in via the DevPanel as `demo_top_player` → `MyRankCard` showed
   `#1` / "Sıralaman" and the Top 100 podium correctly rendered them at
   the center gold slot. Clicked "Kazanç Simüle Et" and, after waiting
@@ -1138,12 +1138,12 @@ It will be updated at every step.
   dev servers afterward; no seeded data was left in a mutated state
   beyond the same `demo_top_player` earnings bump already covered by
   the server's own re-seed convention.
-- **Leaderboard UI polish (post-Adım 8 bug fixes):** `npx tsc -b` and
+- **Leaderboard UI polish (post-implementation bug fixes):** `npx tsc -b` and
   `npm run build` both clean. Full manual walkthrough: `docker compose`
   services already up, `server`'s `npm run dev` + fresh `npm run seed`,
   `client`'s `npm run dev` driven headlessly with a temporary
   `npm install --no-save playwright` (not `chromium-cli`, same fallback
-  used for prior Adım 8 verification; removed afterward, confirmed
+  used for prior Leaderboard UI verification; removed afterward, confirmed
   `git status` shows no `package.json`/lockfile changes). Logged in via
   DevPanel as `demo_regular_player` (seeded outside the top 100):
   screenshot at 1280px confirmed the Top 100 box now shows only rows
