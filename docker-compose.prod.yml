@@ -1,0 +1,92 @@
+# Production overlay for docker-compose.yml. Use together, never alone:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# This file does not redefine postgres/redis/mongo from scratch — it only
+# overrides their `ports:` (removing the host mapping so they're reachable
+# solely on the compose-internal network, not from outside the host) and
+# adds the api/worker/migrate/caddy services on top of the base file.
+
+services:
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  mongo:
+    ports: !reset []
+
+  migrate:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: panteon-server:latest
+    command: ["npx", "prisma", "migrate", "deploy", "--schema=prisma/schema.prisma"]
+    env_file:
+      - ./server/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: panteon-server:latest
+    command: ["node", "dist/server.js"]
+    env_file:
+      - ./server/.env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+    # No `ports:` — only reachable from other containers on the compose
+    # network (Caddy included). Caddy is the sole entry point from the host.
+
+  worker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: panteon-server:latest
+    command: ["node", "dist/worker.js"]
+    env_file:
+      - ./server/.env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  caddy_data:
+  caddy_config:

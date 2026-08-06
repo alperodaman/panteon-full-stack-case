@@ -1,0 +1,8 @@
+api.panteon.alperodaman.com {
+	# Replace the domain above with whatever you actually point DNS at
+	# before deploying — Caddy uses it both to route requests and to
+	# request the Let's Encrypt certificate (automatic HTTPS, on by
+	# default whenever a site block uses a real hostname instead of
+	# ":80"/"localhost"). Compression is left to Caddy's defaults.
+	reverse_proxy api:3000
+}
