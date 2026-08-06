@@ -42,6 +42,13 @@ COPY package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
+# prisma.config.ts lives at the server/ root (sibling of prisma/, not inside
+# it) and is where Prisma 7 reads datasource.url from — `prisma migrate
+# deploy` in the `migrate` service loads this file and fails without it
+# ("datasource.url property is required"). Its `dotenv/config` import needs
+# no extra step: `dotenv` is a normal (non-dev) dependency, so it's already
+# in the node_modules copied above.
+COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 
 # node:20-alpine ships an unprivileged "node" user (uid 1000) out of the box.
 RUN chown -R node:node /app
