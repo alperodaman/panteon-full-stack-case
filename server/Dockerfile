@@ -11,6 +11,16 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
+
+# prisma.config.ts calls env("DATABASE_URL"), and Prisma 7 loads that config
+# file even for `generate` — it never connects, but it still errors out if
+# the variable is unset. There's no .env in the build context (excluded via
+# .dockerignore on purpose, so real secrets never get baked into the image),
+# so give it a throwaway placeholder just to satisfy that check. It has no
+# effect at runtime: api/worker/migrate get the real DATABASE_URL from
+# server/.env via docker-compose.prod.yml's `env_file:`, which overrides
+# this build-time value entirely.
+ENV DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder"
 RUN npx prisma generate --schema=prisma/schema.prisma
 RUN npm run build
 
